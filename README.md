@@ -55,8 +55,8 @@ flowchart TD
     end
 
     subgraph Core["Core"]
-        MODELS["models.py\nDataclasses — single source of truth\nMotionEvent · PullTransaction\nSoapFault · CorrelationRecord\nTimelineEntry · EvidenceBundle\nCaptureQuality · LocalSoapRecord"]
-        TIMELINE["timeline.py\nChronological event stream\nCorrelation engine\nnearest_before / after / absolute"]
+        MODELS["models.py\nDataclasses — single source of truth\nMotionEvent · PullTransaction\nSoapFault · CorrelationRecord\nTimelineEntry · EvidenceBundle\nCaptureQuality · LocalSoapRecord\nNotificationDiagnosis"]
+        TIMELINE["timeline.py\nChronological event stream\nCorrelation engine\nnearest_before / after / absolute\nResponse latency inference\nShort lease detection\nDiagnosis observations"]
     end
 
     subgraph Output["Output layer (report.py)"]
@@ -64,7 +64,7 @@ flowchart TD
         HTML["report.html"]
         JSON["evidence.json"]
         CSV["timeline.csv / timeline.json"]
-        BUNDLE["raw/\nExact captured bytes\nprotect/requests|responses\nlocal/requests|responses|notifications"]
+        BUNDLE["raw/\nExact captured bytes\nprotect/requests|responses\nlocal/requests|responses\nlocal/notifications\nlocal/soap_history"]
     end
 
     SSH --> PCAP
