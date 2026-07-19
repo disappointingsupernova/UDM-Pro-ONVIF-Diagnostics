@@ -449,49 +449,123 @@ def reconstruct_streams(
 
 
 def _pair_http(
-    fwd: _TcpStream,
-    rev: _TcpStream,
+    req: _TcpStream,
+    resp: _TcpStream,
     stream_index: int,
 ) -> List[HttpTransaction]:
-    """Pair HTTP requests from *fwd* with responses from *rev*.
+    """Pair HTTP requests from *req* with responses from *resp*.
 
-    A single TCP stream may carry multiple HTTP/1.1 pipelined requests.
-    This function splits the reassembled byte streams on HTTP message
-    boundaries and pairs them positionally.
+    Timestamps and frame numbers are derived per individual HTTP message
+    from the segments that contributed to that message, not from the
+    first segment of the entire TCP connection.
     """
-    req_messages = _split_http_messages(fwd.ordered_payload())
-    resp_messages = _split_http_messages(rev.ordered_payload())
+    req_messages = _split_http_messages_with_meta(req)
+    resp_messages = _split_http_messages_with_meta(resp)
+
+    # Filter to only actual HTTP requests on the req side
+    req_only = [(hdrs, body, meta) for hdrs, body, meta in req_messages if _is_request(hdrs)]
 
     results: List[HttpTransaction] = []
+    resp_idx = 0
 
-    for i, (req_hdrs, req_body) in enumerate(req_messages):
-        if not _is_request(req_hdrs):
-            continue
-        if i >= len(resp_messages):
-            log.debug("Stream %d: request %d has no matching response", stream_index, i)
-            continue
+    for req_hdrs, req_body, req_meta in req_only:
+        # Skip any 1xx informational responses before the real response
+        while resp_idx < len(resp_messages):
+            r_hdrs, _, _ = resp_messages[resp_idx]
+            status = _http_status(r_hdrs)
+            if 100 <= status <= 199:
+                resp_idx += 1
+            else:
+                break
 
-        resp_hdrs, resp_body = resp_messages[i]
+        if resp_idx >= len(resp_messages):
+            log.debug("Stream %d: request has no matching response", stream_index)
+            break
 
-        req_ts = fwd.first_timestamp() or 0.0
-        resp_ts = rev.first_timestamp() or 0.0
+        resp_hdrs, resp_body, resp_meta = resp_messages[resp_idx]
+        resp_idx += 1
 
         results.append(HttpTransaction(
             tcp_stream=stream_index,
-            src_ip=fwd.src_ip,
-            dst_ip=fwd.dst_ip,
-            src_port=fwd.src_port,
-            dst_port=fwd.dst_port,
-            request_frame=fwd.first_frame(),
-            response_frame=rev.first_frame(),
-            request_time=datetime.fromtimestamp(req_ts, tz=timezone.utc),
-            response_time=datetime.fromtimestamp(resp_ts, tz=timezone.utc),
+            src_ip=req.src_ip,
+            dst_ip=req.dst_ip,
+            src_port=req.src_port,
+            dst_port=req.dst_port,
+            request_frame=req_meta["first_frame"],
+            response_frame=resp_meta["first_frame"],
+            request_time=datetime.fromtimestamp(req_meta["first_ts"], tz=timezone.utc),
+            response_time=datetime.fromtimestamp(resp_meta["first_ts"], tz=timezone.utc),
             http_status=_http_status(resp_hdrs),
             request_body=req_body,
             response_body=resp_body,
             raw_request_headers=req_hdrs,
             raw_response_headers=resp_hdrs,
         ))
+
+    return results
+
+
+def _split_http_messages_with_meta(
+    stream: "_TcpStream",
+) -> List[Tuple[bytes, bytes, dict]]:
+    """Split a TCP stream into HTTP messages, each with per-message metadata.
+
+    Returns a list of ``(headers_block, body, meta)`` tuples where ``meta``
+    contains ``first_frame``, ``last_frame``, ``first_ts``, ``last_ts``
+    derived from the segments that contributed to that individual message.
+
+    This replaces the old approach of using the first frame/timestamp of
+    the entire TCP connection for every message on a persistent connection.
+    """
+    data = stream.ordered_payload()
+    raw_messages = _split_http_messages(data)
+
+    # Build a byte-offset → (frame_number, timestamp) lookup from segments.
+    # For each byte offset in the reassembled stream, find which segment
+    # contributed it by walking segments in sequence order.
+    seg_map: List[Tuple[int, int, float]] = []  # (start_offset, frame_no, ts)
+    if stream.segments:
+        ordered_segs = sorted(stream.segments, key=lambda s: s.seq)
+        base = ordered_segs[0].seq
+        cursor = 0
+        for seg in ordered_segs:
+            offset = seg.seq - base
+            if offset < 0:
+                continue
+            if offset > cursor:
+                cursor = offset
+            seg_map.append((cursor, seg.frame_number, seg.timestamp))
+            cursor += len(seg.payload)
+
+    def _meta_for_range(start: int, end: int) -> dict:
+        """Return frame/timestamp metadata for bytes [start, end) in the stream."""
+        frames = []
+        timestamps = []
+        for seg_start, frame_no, ts in seg_map:
+            if seg_start < end and seg_start >= start:
+                frames.append(frame_no)
+                timestamps.append(ts)
+        if not frames:
+            # Fall back to stream-level values
+            frames = [stream.first_frame()]
+            timestamps = [stream.first_timestamp() or 0.0]
+        return {
+            "first_frame": min(frames),
+            "last_frame": max(frames),
+            "first_ts": min(timestamps),
+            "last_ts": max(timestamps),
+        }
+
+    # Reconstruct byte offsets for each message
+    results = []
+    pos = 0
+    for hdrs, body in raw_messages:
+        # Approximate: header starts at pos, body follows
+        msg_start = pos
+        msg_end = pos + len(hdrs) + 4 + len(body)  # 4 = len("\r\n\r\n")
+        meta = _meta_for_range(msg_start, msg_end)
+        results.append((hdrs, body, meta))
+        pos = msg_end
 
     return results
 
