@@ -46,6 +46,20 @@ except ImportError as _exc:  # pragma: no cover
 from .models import EventSource, MotionEvent, PullTransaction, SoapFault, SoapOperation
 from .soap import SoapParseError, parse_envelope
 
+try:
+    from lxml import etree as _etree
+except ImportError:  # pragma: no cover
+    _etree = None  # type: ignore
+
+
+def _lxml_fromstring(data: bytes):
+    if _etree is None:
+        return None
+    try:
+        return _etree.fromstring(data)
+    except Exception:
+        return None
+
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -527,11 +541,30 @@ def extract_transactions(
 
         operation = req_operation if req_operation != SoapOperation.UNKNOWN else resp_operation
 
-        # Extract subscription ID from request headers (WS-Addressing To header)
+        # Extract WS-Addressing fields from the request SOAP envelope.
+        # wsa:To is an element inside the SOAP header, not an HTTP header.
         sub_id: Optional[str] = None
-        to_header = _header_value(txn.raw_request_headers, "To")
-        if to_header:
-            sub_id = to_header
+        http_request_target: Optional[str] = None
+
+        # Extract HTTP request target (first line: POST /path HTTP/1.1)
+        first_line = txn.raw_request_headers.split(b"\r\n")[0]
+        parts = first_line.split(b" ")
+        if len(parts) >= 2:
+            http_request_target = parts[1].decode(errors="replace")
+
+        if _is_soap(txn.request_body):
+            try:
+                req_env = _lxml_fromstring(txn.request_body)
+                if req_env is not None:
+                    wsa_to = req_env.xpath(
+                        ".//*[local-name()='Header']//*[local-name()='To']"
+                    )
+                    if wsa_to:
+                        sub_id = (wsa_to[0].text or "").strip() or None
+                if sub_id is None:
+                    sub_id = http_request_target
+            except Exception:
+                sub_id = http_request_target
 
         pull_transactions.append(PullTransaction(
             tcp_stream=txn.tcp_stream,
