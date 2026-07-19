@@ -585,12 +585,12 @@ pytest
 ```
 
 ```
-178 tests · 0 failures
+186 tests · 0 failures
 ```
 
 | Test file | Module under test | Tests |
 |---|---|---|
-| `test_soap.py` | `soap.py` | 41 |
+| `test_soap.py` | `soap.py` | 49 |
 | `test_pcap.py` | `pcap.py` | 40 |
 | `test_capture.py` | `capture.py` | 10 |
 | `test_onvif_client.py` | `onvif_client.py` | 36 |
