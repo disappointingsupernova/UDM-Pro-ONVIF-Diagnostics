@@ -307,30 +307,71 @@ def _parse_notification_message(
     tcp_stream: int,
     frame_number: int,
     source: EventSource,
-) -> Optional[MotionEvent]:
-    """Parse one ``wsnt:NotificationMessage`` element into a ``MotionEvent``."""
+) -> MotionEvent:
+    """Parse one ``wsnt:NotificationMessage`` element into a ``MotionEvent``.
+
+    Always returns a ``MotionEvent``.  When required fields are absent or
+    unparseable the event is marked ``parse_status='partial'`` and the
+    issues are recorded in ``parse_warnings``.  A malformed notification
+    is evidence in itself and must not be silently discarded.
+    """
+    warnings: List[str] = []
+    parse_status = "ok"
+
     topic_nodes = notif_el.xpath("./*[local-name()='Topic']")
     topic = "".join(topic_nodes[0].itertext()).strip() if topic_nodes else ""
+    if not topic_nodes:
+        warnings.append("NotificationMessage did not contain a Topic element")
 
-    # The inner tt:Message element carries UtcTime and PropertyOperation
+    # The inner tt:Message element carries UtcTime and PropertyOperation.
+    # Accept Message elements with or without UtcTime.
     message_nodes = notif_el.xpath(".//*[local-name()='Message'][@UtcTime]")
     if not message_nodes:
-        log.debug("NotificationMessage has no inner Message[@UtcTime]; skipping")
-        return None
+        # Try without the UtcTime requirement — prefer the innermost Message
+        # (tt:Message) over the outer wsnt:Message wrapper.
+        all_msg = notif_el.xpath(".//*[local-name()='Message']")
+        # Filter to elements that have PropertyOperation (tt:Message)
+        # or fall back to elements with child elements.
+        with_op = [m for m in all_msg if m.get("PropertyOperation") is not None]
+        message_nodes = with_op if with_op else [m for m in all_msg if len(m) > 0]
+        if not message_nodes:
+            message_nodes = all_msg  # last resort: take any Message
+        if not message_nodes:
+            warnings.append("NotificationMessage did not contain a Message element")
+            parse_status = "partial"
+            return MotionEvent(
+                utc=datetime(1970, 1, 1, tzinfo=timezone.utc),
+                operation="",
+                is_motion=None,
+                state=None,
+                topic=topic,
+                source_items=[],
+                key_items=[],
+                data_items=[],
+                source=source,
+                tcp_stream=tcp_stream,
+                frame_number=frame_number,
+                raw_xml=_to_xml_string(notif_el),
+                parse_status=parse_status,
+                parse_warnings=warnings,
+                timestamp_valid=False,
+            )
+        warnings.append("Message element present but UtcTime attribute is absent")
 
     msg = message_nodes[0]
     utc_str = msg.get("UtcTime", "")
     utc = _parse_utc(utc_str)
+    timestamp_valid = utc is not None
     if utc is None:
         log.warning("Could not parse UtcTime=%r in NotificationMessage", utc_str)
-        # Do not substitute datetime.now() — that would invent evidence.
-        # Use a sentinel so the caller knows the timestamp is absent.
+        warnings.append(f"Could not parse UtcTime={utc_str!r}; using epoch sentinel")
+        parse_status = "partial"
         utc = datetime(1970, 1, 1, tzinfo=timezone.utc)
-        timestamp_valid = False
-    else:
-        timestamp_valid = True
 
     operation = msg.get("PropertyOperation", "")
+    if not operation:
+        warnings.append("PropertyOperation attribute is absent")
+        parse_status = "partial"
 
     source_el_list = msg.xpath("./*[local-name()='Source']")
     key_el_list = msg.xpath("./*[local-name()='Key']")
@@ -361,6 +402,9 @@ def _parse_notification_message(
         tcp_stream=tcp_stream,
         frame_number=frame_number,
         raw_xml=_to_xml_string(notif_el),
+        parse_status=parse_status,
+        parse_warnings=warnings,
+        timestamp_valid=timestamp_valid,
     )
 
 
@@ -372,12 +416,10 @@ def _parse_pull_messages_response(
     frame_number: int,
     source: EventSource,
 ) -> List[MotionEvent]:
-    events: List[MotionEvent] = []
-    for notif_el in envelope.xpath("//*[local-name()='NotificationMessage']"):
-        event = _parse_notification_message(notif_el, tcp_stream, frame_number, source)
-        if event is not None:
-            events.append(event)
-    return events
+    return [
+        _parse_notification_message(notif_el, tcp_stream, frame_number, source)
+        for notif_el in envelope.xpath("//*[local-name()='NotificationMessage']")
+    ]
 
 
 def _parse_notify(

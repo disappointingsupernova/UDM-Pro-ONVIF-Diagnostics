@@ -130,16 +130,17 @@ class MotionEvent:
     ----------
     utc:
         The ``UtcTime`` attribute from the inner ``tt:Message`` element.
+        Set to the Unix epoch sentinel ``datetime(1970,1,1,utc)`` when
+        the timestamp was absent or unparseable.
     operation:
         The ``PropertyOperation`` attribute (``"Initialized"``, ``"Changed"``,
-        ``"Deleted"``).
+        ``"Deleted"``).  Empty string if absent.
     is_motion:
         Parsed value of the ``IsMotion`` ``SimpleItem``, or ``None`` if absent.
     state:
         Parsed value of the ``State`` ``SimpleItem``, or ``None`` if absent.
     topic:
-        The ``wsnt:Topic`` text, e.g.
-        ``"tns1:VideoAnalytics/tnsaxis:MotionGuard/Camera1Profile1"``.
+        The ``wsnt:Topic`` text.  Empty string if absent.
     source_items:
         All ``tt:SimpleItem`` elements from the ``tt:Source`` section.
     key_items:
@@ -153,7 +154,20 @@ class MotionEvent:
     frame_number:
         PCAP frame number (``-1`` if from the live ONVIF client).
     raw_xml:
-        The complete ``NotificationMessage`` XML fragment as a string.
+        The re-serialised XML fragment (pretty-printed by lxml).
+    raw_body_bytes:
+        Exact captured bytes of the enclosing HTTP body.
+    body_sha256:
+        SHA-256 hex digest of ``raw_body_bytes``.
+    parse_status:
+        ``"ok"`` for a fully parsed notification, ``"partial"`` when
+        required fields were absent or unparseable.
+    parse_warnings:
+        List of human-readable warnings describing what was missing or
+        could not be parsed.  Empty for fully parsed notifications.
+    timestamp_valid:
+        ``True`` if ``utc`` was successfully parsed from the camera's
+        ``UtcTime`` attribute.  ``False`` means the epoch sentinel was used.
     """
 
     utc: datetime
@@ -170,6 +184,9 @@ class MotionEvent:
     raw_xml: str
     raw_body_bytes: bytes = field(default=b"")
     body_sha256: str = field(default="")
+    parse_status: str = field(default="ok")
+    parse_warnings: List[str] = field(default_factory=list)
+    timestamp_valid: bool = field(default=True)
 
 
 # ---------------------------------------------------------------------------

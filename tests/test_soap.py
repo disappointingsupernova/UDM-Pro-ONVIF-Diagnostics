@@ -219,6 +219,52 @@ class TestPullMessagesRequest:
 
 
 # ---------------------------------------------------------------------------
+# Partial / malformed notifications preserved as evidence
+# ---------------------------------------------------------------------------
+
+
+class TestPartialNotifications:
+    def test_no_message_element_returns_partial_event(self):
+        """A NotificationMessage with no inner Message must not be discarded."""
+        xml = _load("notification_no_message.xml")
+        _, events = parse_envelope(xml, source=EventSource.PROTECT)
+        assert len(events) == 1
+        assert events[0].parse_status == "partial"
+        assert any("Message" in w for w in events[0].parse_warnings)
+
+    def test_no_message_element_raw_xml_retained(self):
+        xml = _load("notification_no_message.xml")
+        _, events = parse_envelope(xml, source=EventSource.PROTECT)
+        assert "NotificationMessage" in events[0].raw_xml
+
+    def test_no_utctime_returns_partial_event(self):
+        """A Message without UtcTime must be returned with parse_status=partial."""
+        xml = _load("notification_no_utctime.xml")
+        _, events = parse_envelope(xml, source=EventSource.PROTECT)
+        assert len(events) == 1
+        assert events[0].parse_status == "partial"
+        assert events[0].timestamp_valid is False
+
+    def test_no_utctime_epoch_sentinel(self):
+        xml = _load("notification_no_utctime.xml")
+        _, events = parse_envelope(xml, source=EventSource.PROTECT)
+        assert events[0].utc.year == 1970
+
+    def test_no_utctime_data_still_parsed(self):
+        """IsMotion must still be extracted even when UtcTime is absent."""
+        xml = _load("notification_no_utctime.xml")
+        _, events = parse_envelope(xml, source=EventSource.PROTECT)
+        assert events[0].is_motion is True
+
+    def test_fully_parsed_event_has_ok_status(self):
+        xml = _load("motion_true.xml")
+        _, events = parse_envelope(xml, source=EventSource.PROTECT)
+        assert events[0].parse_status == "ok"
+        assert events[0].parse_warnings == []
+        assert events[0].timestamp_valid is True
+
+
+# ---------------------------------------------------------------------------
 # Error handling
 # ---------------------------------------------------------------------------
 
