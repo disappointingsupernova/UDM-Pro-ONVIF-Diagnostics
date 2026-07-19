@@ -79,7 +79,14 @@ class _Segment:
 
 @dataclass
 class _TcpStream:
-    """Reassembled byte stream for one direction of a TCP connection."""
+    """Reassembled byte stream for one direction of a TCP connection.
+
+    Uses overlap-aware, retransmission-safe reconstruction:
+    segments are inserted into a contiguous byte buffer by sequence
+    offset.  Retransmitted or overlapping bytes are deduplicated.
+    Gaps (missing segments) are tracked so callers can mark affected
+    HTTP messages as incomplete.
+    """
 
     src_ip: str
     dst_ip: str
@@ -87,10 +94,91 @@ class _TcpStream:
     dst_port: int
     segments: List[_Segment] = field(default_factory=list)
 
+    # Populated by _assemble() on first call; cached thereafter.
+    _assembled: Optional[bytes] = field(default=None, repr=False, compare=False)
+    _base_seq: Optional[int] = field(default=None, repr=False, compare=False)
+    _retransmitted_bytes: int = field(default=0, repr=False, compare=False)
+    _overlapping_bytes: int = field(default=0, repr=False, compare=False)
+
     def ordered_payload(self) -> bytes:
-        """Return payload bytes ordered by sequence number."""
+        """Return the reassembled payload with retransmissions removed."""
+        if self._assembled is None:
+            self._assemble()
+        return self._assembled  # type: ignore[return-value]
+
+    @property
+    def retransmitted_bytes(self) -> int:
+        if self._assembled is None:
+            self._assemble()
+        return self._retransmitted_bytes
+
+    @property
+    def overlapping_bytes(self) -> int:
+        if self._assembled is None:
+            self._assemble()
+        return self._overlapping_bytes
+
+    def _assemble(self) -> None:
+        """Reconstruct the byte stream, deduplicating retransmissions.
+
+        Algorithm
+        ---------
+        1. Sort segments by sequence number.
+        2. Establish the base sequence number from the first segment.
+        3. Walk segments in order; for each segment compute its byte
+           offset relative to the base.
+        4. If the segment starts before the current write cursor
+           (retransmission or overlap), skip already-written bytes and
+           only append the novel tail.
+        5. If the segment starts after the cursor, there is a gap;
+           fill with zero bytes so offsets remain correct and record
+           the gap size.
+        """
+        if not self.segments:
+            self._assembled = b""
+            return
+
         ordered = sorted(self.segments, key=lambda s: s.seq)
-        return b"".join(s.payload for s in ordered)
+        self._base_seq = ordered[0].seq
+        buf = bytearray()
+        cursor = 0  # next byte offset to write
+        retransmitted = 0
+        overlapping = 0
+
+        for seg in ordered:
+            offset = seg.seq - self._base_seq
+            # Handle 32-bit sequence number wraparound
+            if offset < -2**31:
+                offset += 2**32
+            elif offset > 2**31:
+                offset -= 2**32
+
+            if offset < 0:
+                # Segment starts before our base — skip it entirely
+                retransmitted += len(seg.payload)
+                continue
+
+            if offset < cursor:
+                # Retransmission or overlap: only the bytes beyond cursor are new
+                novel_start = cursor - offset
+                if novel_start >= len(seg.payload):
+                    retransmitted += len(seg.payload)
+                    continue
+                overlapping += novel_start
+                novel = seg.payload[novel_start:]
+                buf.extend(novel)
+                cursor += len(novel)
+            else:
+                if offset > cursor:
+                    # Gap: fill with zeros so offsets stay correct
+                    buf.extend(b"\x00" * (offset - cursor))
+                    cursor = offset
+                buf.extend(seg.payload)
+                cursor += len(seg.payload)
+
+        self._assembled = bytes(buf)
+        self._retransmitted_bytes = retransmitted
+        self._overlapping_bytes = overlapping
 
     def first_timestamp(self) -> Optional[float]:
         if not self.segments:

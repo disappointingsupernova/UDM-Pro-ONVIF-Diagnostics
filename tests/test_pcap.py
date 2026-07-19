@@ -13,6 +13,8 @@ import pytest
 from onvif_compare.models import EventSource, SoapOperation
 from onvif_compare.pcap import (
     HttpTransaction,
+    _Segment,
+    _TcpStream,
     _decode_chunked,
     _extract_body,
     _http_status,
@@ -118,7 +120,51 @@ class TestChunkedParsing:
 # ---------------------------------------------------------------------------
 
 
-class TestDirectionDetection:
+class TestTcpStreamReassembly:
+    """Verify retransmission-aware TCP reconstruction."""
+
+    def _stream(self, segments):
+        s = _TcpStream("1.2.3.4", "5.6.7.8", 1234, 80)
+        s.segments = [
+            _Segment(seq=seq, payload=payload, timestamp=0.0, frame_number=i)
+            for i, (seq, payload) in enumerate(segments)
+        ]
+        return s
+
+    def test_in_order(self):
+        s = self._stream([(0, b"hello"), (5, b" world")])
+        assert s.ordered_payload() == b"hello world"
+
+    def test_out_of_order(self):
+        s = self._stream([(5, b" world"), (0, b"hello")])
+        assert s.ordered_payload() == b"hello world"
+
+    def test_retransmission_deduplicated(self):
+        # Segment at seq=0 sent twice — payload must appear once
+        s = self._stream([(0, b"hello"), (0, b"hello"), (5, b" world")])
+        assert s.ordered_payload() == b"hello world"
+        assert s.retransmitted_bytes == 5
+
+    def test_partial_overlap(self):
+        # First segment: bytes 0-4, second: bytes 3-7 (overlap at 3-4)
+        s = self._stream([(0, b"hello"), (3, b"lo wo"), (8, b"rld")])
+        assert s.ordered_payload() == b"hello world"
+        assert s.overlapping_bytes == 2
+
+    def test_gap_filled_with_zeros(self):
+        # Gap between seq 5 and seq 10
+        s = self._stream([(0, b"hello"), (10, b"world")])
+        payload = s.ordered_payload()
+        assert payload[:5] == b"hello"
+        assert payload[5:10] == b"\x00" * 5
+        assert payload[10:] == b"world"
+
+    def test_empty_stream(self):
+        s = _TcpStream("1.2.3.4", "5.6.7.8", 1234, 80)
+        assert s.ordered_payload() == b""
+
+
+
     """Verify direction is determined from the camera endpoint, not address sorting."""
 
     def test_camera_sorts_before_client(self):
