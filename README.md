@@ -639,7 +639,3 @@ regression tests referencing them.
   expiry. It recreates the subscription on any exception, which is
   functionally equivalent but produces a log warning on cameras (such as
   Reolink) that terminate subscriptions after ~60 s.
-- The Zeep history plugin (`_SoapHistoryPlugin`) captures SOAP envelopes
-  from the local subscriber but these are not yet written to the `raw/local/`
-  directory in the evidence bundle. They are available in `subscriber.soap_history`
-  for programmatic access.
