@@ -139,6 +139,27 @@ def _parse_notification(notification, source: EventSource) -> Optional[MotionEve
 
 
 # ---------------------------------------------------------------------------
+# Real-time event display
+# ---------------------------------------------------------------------------
+
+
+def _print_event(event: "MotionEvent") -> None:
+    """Print a motion event to stdout immediately as it arrives.
+
+    This runs in the subscriber background thread and is intentionally
+    a direct ``print()`` rather than a log call so it appears regardless
+    of the configured ``--log-level``.
+    """
+    is_motion_str = str(event.is_motion).lower() if event.is_motion is not None else "?"
+    state_str = f" State={str(event.state).lower()}" if event.state is not None else ""
+    utc_str = event.utc.strftime("%H:%M:%S.%f")[:-3] if event.utc else "?"
+    print(
+        f"[LOCAL {utc_str}] {event.operation} IsMotion={is_motion_str}{state_str}",
+        flush=True,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Error classification
 # ---------------------------------------------------------------------------
 
@@ -353,11 +374,4 @@ class OnvifSubscriber:
                 if event is not None:
                     with self._lock:
                         self.events.append(event)
-                    log.info(
-                        "[%s] %s IsMotion=%s State=%s topic=%s",
-                        cfg.source.value.upper(),
-                        event.operation,
-                        event.is_motion,
-                        event.state,
-                        event.topic,
-                    )
+                    _print_event(event)
