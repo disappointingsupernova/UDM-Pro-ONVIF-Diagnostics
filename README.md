@@ -158,6 +158,69 @@ Python 3.8+ required.
 
 ---
 
+## Running the tool
+
+There are three ways to invoke it depending on whether you have installed the
+package or are running directly from the cloned repository.
+
+**Option 1 — `python3 -m onvif_compare` (no install required)**
+
+From the project root directory:
+
+```bash
+cd /path/to/UDM-Pro-ONVIF-Diagnostics
+
+python3 -m onvif_compare capture \
+  --camera-ip 10.54.4.13 \
+  --ssh-host  10.54.4.1 \
+  --protect-ip 10.54.4.1 \
+  --duration 60
+
+python3 -m onvif_compare analyse \
+  --pcap capture.pcap \
+  --camera-ip 10.54.4.13 \
+  --protect-ip 10.54.4.1
+
+python3 -m onvif_compare --help
+```
+
+You must run from the **project root** (the directory that contains the
+`onvif_compare/` folder), not from inside `onvif_compare/` itself.
+
+**Option 2 — install in editable mode (makes `onvif-compare` available system-wide)**
+
+```bash
+cd /path/to/UDM-Pro-ONVIF-Diagnostics
+pip install -e .
+```
+
+After this the `onvif-compare` command works from any directory:
+
+```bash
+onvif-compare capture \
+  --camera-ip 10.54.4.13 \
+  --ssh-host  10.54.4.1 \
+  --protect-ip 10.54.4.1 \
+  --duration 60
+```
+
+**Option 3 — install normally**
+
+```bash
+pip install .
+```
+
+Same as option 2 but not editable.
+
+> **Common mistake:** running `python3 main.py` from inside the
+> `onvif_compare/` directory fails with
+> `ImportError: attempted relative import with no known parent package`.
+> The modules use relative imports and must be run as a package.
+> Always use `python3 -m onvif_compare` from the project root, or install
+> first.
+
+---
+
 ## Subcommands
 
 ### `capture` — live capture and analysis
@@ -166,12 +229,20 @@ Connects to the camera, starts an independent PullPoint subscription, SSHes
 to the UDM Pro to run `tcpdump`, waits for the requested duration, downloads
 the PCAP, analyses it, and writes the evidence bundle — all in one step.
 
-```
+```bash
+# If installed
 onvif-compare capture \
-  --camera-ip     192.168.1.100 \
-  --protect-ip    10.54.4.1 \
-  --ssh-host      10.54.4.1 \
-  --duration      60
+  --camera-ip  192.168.1.100 \
+  --protect-ip 10.54.4.1 \
+  --ssh-host   10.54.4.1 \
+  --duration   60
+
+# Without installing
+python3 -m onvif_compare capture \
+  --camera-ip  192.168.1.100 \
+  --protect-ip 10.54.4.1 \
+  --ssh-host   10.54.4.1 \
+  --duration   60
 ```
 
 **All `capture` flags**
@@ -208,13 +279,13 @@ network configuration.
   - Auto-selects if exactly one `br*` interface is found
   - Lists all candidates and exits with an error if multiple bridges exist
 
-```
+```bash
 # Explicit interface (recommended)
-onvif-compare capture --camera-ip 192.168.1.100 --ssh-host 10.54.4.1 \
+python3 -m onvif_compare capture --camera-ip 192.168.1.100 --ssh-host 10.54.4.1 \
   --protect-ip 10.54.4.1 --interface br554 --duration 60
 
 # Auto-detect (single bridge only)
-onvif-compare capture --camera-ip 192.168.1.100 --ssh-host 10.54.4.1 \
+python3 -m onvif_compare capture --camera-ip 192.168.1.100 --ssh-host 10.54.4.1 \
   --protect-ip 10.54.4.1 --duration 60
 ```
 
@@ -222,22 +293,22 @@ onvif-compare capture --camera-ip 192.168.1.100 --ssh-host 10.54.4.1 \
 
 ```bash
 # Key-based (recommended — no password prompt)
-onvif-compare capture --camera-ip 192.168.1.100 --ssh-host 10.54.4.1 \
+python3 -m onvif_compare capture --camera-ip 192.168.1.100 --ssh-host 10.54.4.1 \
   --protect-ip 10.54.4.1 --ssh-key ~/.ssh/udm_rsa --duration 60
 
 # Password-based
-onvif-compare capture --camera-ip 192.168.1.100 --ssh-host 10.54.4.1 \
+python3 -m onvif_compare capture --camera-ip 192.168.1.100 --ssh-host 10.54.4.1 \
   --protect-ip 10.54.4.1 --ssh-password --duration 60
 
 # SSH agent (default if no key or password flag given)
-onvif-compare capture --camera-ip 192.168.1.100 --ssh-host 10.54.4.1 \
+python3 -m onvif_compare capture --camera-ip 192.168.1.100 --ssh-host 10.54.4.1 \
   --protect-ip 10.54.4.1 --duration 60
 ```
 
 **Local capture mode** (lab / same-segment setups)
 
 ```bash
-onvif-compare capture --camera-ip 192.168.1.100 --protect-ip 10.54.4.1 \
+python3 -m onvif_compare capture --camera-ip 192.168.1.100 --protect-ip 10.54.4.1 \
   --capture local --interface eth0 --duration 60
 ```
 
@@ -249,11 +320,18 @@ Analyses an existing PCAP file. No camera connection required. Useful for
 re-analysing a capture with a different correlation window, or for analysing
 a PCAP captured by other means (e.g. a port mirror or Wireshark).
 
-```
+```bash
+# If installed
 onvif-compare analyse \
-  --pcap        capture.pcap \
-  --camera-ip   192.168.1.100 \
-  --protect-ip  10.54.4.1
+  --pcap       capture.pcap \
+  --camera-ip  192.168.1.100 \
+  --protect-ip 10.54.4.1
+
+# Without installing
+python3 -m onvif_compare analyse \
+  --pcap       capture.pcap \
+  --camera-ip  192.168.1.100 \
+  --protect-ip 10.54.4.1
 ```
 
 **All `analyse` flags**
@@ -270,17 +348,17 @@ onvif-compare analyse \
 
 ```bash
 # Re-analyse with a wider correlation window
-onvif-compare analyse --pcap capture.pcap \
+python3 -m onvif_compare analyse --pcap capture.pcap \
   --camera-ip 192.168.1.100 --protect-ip 10.54.4.1 \
   --correlation-window 2000
 
 # Specify local subscriber IP for better source classification
-onvif-compare analyse --pcap capture.pcap \
+python3 -m onvif_compare analyse --pcap capture.pcap \
   --camera-ip 192.168.1.100 --protect-ip 10.54.4.1 \
   --local-ip 192.168.1.50
 
 # Write output to a specific directory
-onvif-compare analyse --pcap capture.pcap \
+python3 -m onvif_compare analyse --pcap capture.pcap \
   --camera-ip 192.168.1.100 --protect-ip 10.54.4.1 \
   --output-dir /tmp/evidence_reolink_2024
 ```
@@ -292,8 +370,10 @@ onvif-compare analyse --pcap capture.pcap \
 Re-renders `report.md` and `report.html` from an existing `evidence.json`.
 Useful after updating the report renderer without re-running a capture.
 
-```
+```bash
 onvif-compare report --evidence evidence_20240315_084100/evidence.json
+# or
+python3 -m onvif_compare report --evidence evidence_20240315_084100/evidence.json
 ```
 
 > **Note:** Full JSON deserialisation is not yet implemented. Use `analyse`
