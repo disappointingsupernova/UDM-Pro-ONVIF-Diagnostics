@@ -54,7 +54,7 @@ log = logging.getLogger(__name__)
 
 
 class _BundleEncoder(json.JSONEncoder):
-    """Serialise dataclasses, datetimes, and enums to JSON."""
+    """Serialise dataclasses, datetimes, enums, and bytes to JSON."""
 
     def default(self, obj: Any) -> Any:
         if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
@@ -63,6 +63,10 @@ class _BundleEncoder(json.JSONEncoder):
             return format_utc(obj)
         if isinstance(obj, Enum):
             return obj.value
+        if isinstance(obj, bytes):
+            # Encode raw bytes as a hex string for JSON portability.
+            # The original bytes are saved to disk separately.
+            return obj.hex()
         return super().default(obj)
 
 
@@ -106,8 +110,13 @@ def save_raw_xml(
         slug = f"stream_{txn.tcp_stream:03d}"
         req_path = raw_dir / "protect" / "requests" / f"{slug}_req.xml"
         resp_path = raw_dir / "protect" / "responses" / f"{slug}_resp.xml"
-        _save(req_path, txn.raw_request)
-        _save(resp_path, txn.raw_response)
+        # Save exact captured bytes; fall back to string decode if bytes absent
+        req_bytes = txn.raw_request_bytes or txn.raw_request.encode(errors="replace")
+        resp_bytes = txn.raw_response_bytes or txn.raw_response.encode(errors="replace")
+        req_path.parent.mkdir(parents=True, exist_ok=True)
+        req_path.write_bytes(req_bytes)
+        resp_path.parent.mkdir(parents=True, exist_ok=True)
+        resp_path.write_bytes(resp_bytes)
         txn.request_xml_path = str(req_path.relative_to(output_dir))
         txn.response_xml_path = str(resp_path.relative_to(output_dir))
 
@@ -115,8 +124,12 @@ def save_raw_xml(
         slug = f"stream_{txn.tcp_stream:03d}"
         req_path = raw_dir / "local" / "requests" / f"{slug}_req.xml"
         resp_path = raw_dir / "local" / "responses" / f"{slug}_resp.xml"
-        _save(req_path, txn.raw_request)
-        _save(resp_path, txn.raw_response)
+        req_bytes = txn.raw_request_bytes or txn.raw_request.encode(errors="replace")
+        resp_bytes = txn.raw_response_bytes or txn.raw_response.encode(errors="replace")
+        req_path.parent.mkdir(parents=True, exist_ok=True)
+        req_path.write_bytes(req_bytes)
+        resp_path.parent.mkdir(parents=True, exist_ok=True)
+        resp_path.write_bytes(resp_bytes)
         txn.request_xml_path = str(req_path.relative_to(output_dir))
         txn.response_xml_path = str(resp_path.relative_to(output_dir))
 

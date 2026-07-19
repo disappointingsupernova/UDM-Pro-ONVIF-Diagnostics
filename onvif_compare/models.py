@@ -88,7 +88,13 @@ class SoapFault:
     frame_number:
         PCAP frame number of the response packet.
     raw_xml:
-        The complete SOAP envelope as a string.
+        Re-serialised XML (pretty-printed by lxml).  May differ from the
+        original in whitespace and namespace prefix placement.
+    raw_body_bytes:
+        The exact bytes of the HTTP response body as captured on the wire.
+        Never modified.  Use this for chain-of-custody evidence.
+    body_sha256:
+        SHA-256 hex digest of ``raw_body_bytes``.
     """
 
     code: str
@@ -99,6 +105,8 @@ class SoapFault:
     tcp_stream: int
     frame_number: int
     raw_xml: str
+    raw_body_bytes: bytes = field(default=b"")
+    body_sha256: str = field(default="")
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +168,8 @@ class MotionEvent:
     tcp_stream: int
     frame_number: int
     raw_xml: str
+    raw_body_bytes: bytes = field(default=b"")
+    body_sha256: str = field(default="")
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +230,10 @@ class PullTransaction:
     response_xml_path: Optional[str]
     raw_request: str
     raw_response: str
+    raw_request_bytes: bytes = field(default=b"")
+    raw_response_bytes: bytes = field(default=b"")
+    request_body_sha256: str = field(default="")
+    response_body_sha256: str = field(default="")
 
 
 # ---------------------------------------------------------------------------

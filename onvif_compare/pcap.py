@@ -45,6 +45,7 @@ except ImportError as _exc:  # pragma: no cover
 
 from .models import EventSource, MotionEvent, PullTransaction, SoapFault, SoapOperation
 from .soap import SoapParseError, parse_envelope
+from .util import sha256_bytes
 
 try:
     from lxml import etree as _etree
@@ -785,10 +786,14 @@ def extract_transactions(
             soap_fault=fault,
             source=source,
             subscription_id=sub_id,
-            request_xml_path=None,   # set by report.py when saving
+            request_xml_path=None,
             response_xml_path=None,
             raw_request=txn.request_body.decode(errors="replace"),
             raw_response=txn.response_body.decode(errors="replace"),
+            raw_request_bytes=txn.request_body,
+            raw_response_bytes=txn.response_body,
+            request_body_sha256=sha256_bytes(txn.request_body),
+            response_body_sha256=sha256_bytes(txn.response_body),
         ))
 
     return pull_transactions, soap_faults

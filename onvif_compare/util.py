@@ -21,6 +21,11 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def sha256_bytes(data: bytes) -> str:
+    """Return the lowercase hex SHA-256 digest of *data*."""
+    return hashlib.sha256(data).hexdigest()
+
+
 def utc_now() -> datetime:
     """Return the current time as a timezone-aware UTC datetime."""
     return datetime.now(tz=timezone.utc)
