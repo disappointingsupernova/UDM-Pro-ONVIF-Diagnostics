@@ -214,26 +214,6 @@ def _is_request(headers_block: bytes) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Stream key
-# ---------------------------------------------------------------------------
-
-
-def _stream_key(src_ip: str, src_port: int, dst_ip: str, dst_port: int) -> str:
-    return f"{src_ip}:{src_port}-{dst_ip}:{dst_port}"
-
-
-def _canonical_stream_key(
-    src_ip: str, src_port: int, dst_ip: str, dst_port: int
-) -> Tuple[str, bool]:
-    """Return a canonical (sorted) key and whether the direction is forward."""
-    a = (src_ip, src_port)
-    b = (dst_ip, dst_port)
-    if a <= b:
-        return f"{src_ip}:{src_port}-{dst_ip}:{dst_port}", True
-    return f"{dst_ip}:{dst_port}-{src_ip}:{src_port}", False
-
-
-# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -293,12 +273,17 @@ def reconstruct_streams(
 ) -> List[HttpTransaction]:
     """Read *path* and return all HTTP transactions involving the camera.
 
+    Direction is determined from the known camera endpoint, not from
+    lexical address ordering.  Segments flowing *to* the camera are
+    requests; segments flowing *from* the camera are responses.
+
     Parameters
     ----------
     path:
         Path to the PCAP file.
     camera_ip:
-        IP address of the ONVIF camera.
+        IP address of the ONVIF camera.  Traffic to this IP is treated as
+        requests; traffic from it is treated as responses.
     protect_ip:
         IP address of the UniFi Protect controller.
     local_ip:
@@ -308,11 +293,11 @@ def reconstruct_streams(
     -------
     List of ``HttpTransaction`` objects, one per matched request/response pair.
     """
-    # Collect TCP segments per canonical stream key
-    # forward_streams[key] = segments from the request direction
-    # reverse_streams[key] = segments from the response direction
-    forward: Dict[str, _TcpStream] = {}
-    reverse: Dict[str, _TcpStream] = {}
+    # Two independent byte streams per TCP connection:
+    #   to_camera[key]   — bytes flowing toward the camera (requests)
+    #   from_camera[key] — bytes flowing away from the camera (responses)
+    to_camera: Dict[str, _TcpStream] = {}
+    from_camera: Dict[str, _TcpStream] = {}
     stream_index: Dict[str, int] = {}
     next_index = [0]
 
@@ -331,7 +316,18 @@ def reconstruct_streams(
         if not payload:
             continue
 
-        key, is_fwd = _canonical_stream_key(ip.src, tcp.sport, ip.dst, tcp.dport)
+        # Canonical connection key: always (client_ip:port, camera_ip:port)
+        # where client is whichever side is NOT the camera.
+        if ip.dst == camera_ip:
+            client_ip, client_port = ip.src, tcp.sport
+            cam_port = tcp.dport
+            going_to_camera = True
+        else:
+            client_ip, client_port = ip.dst, tcp.dport
+            cam_port = tcp.sport
+            going_to_camera = False
+
+        key = f"{client_ip}:{client_port}-{camera_ip}:{cam_port}"
 
         if key not in stream_index:
             stream_index[key] = next_index[0]
@@ -339,24 +335,25 @@ def reconstruct_streams(
 
         seg = _Segment(seq=tcp.seq, payload=payload, timestamp=ts, frame_number=frame_no)
 
-        if is_fwd:
-            if key not in forward:
-                forward[key] = _TcpStream(ip.src, ip.dst, tcp.sport, tcp.dport)
-            forward[key].segments.append(seg)
+        if going_to_camera:
+            if key not in to_camera:
+                to_camera[key] = _TcpStream(client_ip, camera_ip, client_port, cam_port)
+            to_camera[key].segments.append(seg)
         else:
-            if key not in reverse:
-                reverse[key] = _TcpStream(ip.dst, ip.src, tcp.dport, tcp.sport)
-            reverse[key].segments.append(seg)
+            if key not in from_camera:
+                from_camera[key] = _TcpStream(camera_ip, client_ip, cam_port, client_port)
+            from_camera[key].segments.append(seg)
 
     transactions: List[HttpTransaction] = []
 
-    for key, fwd_stream in forward.items():
-        rev_stream = reverse.get(key)
-        if rev_stream is None:
+    for key in set(to_camera) | set(from_camera):
+        req_stream = to_camera.get(key)
+        resp_stream = from_camera.get(key)
+        if req_stream is None or resp_stream is None:
             continue
 
         idx = stream_index[key]
-        txns = _pair_http(fwd_stream, rev_stream, idx)
+        txns = _pair_http(req_stream, resp_stream, idx)
         transactions.extend(txns)
 
     transactions.sort(key=lambda t: t.request_time)

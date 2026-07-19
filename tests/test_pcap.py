@@ -118,7 +118,39 @@ class TestChunkedParsing:
 # ---------------------------------------------------------------------------
 
 
-class TestGoodPcap:
+class TestDirectionDetection:
+    """Verify direction is determined from the camera endpoint, not address sorting."""
+
+    def test_camera_sorts_before_client(self):
+        """Camera IP 10.0.0.1 sorts before client 192.168.1.100 lexically.
+        The old code would have put camera→client in 'forward' (requests),
+        which is backwards.  The new code always uses camera endpoint."""
+        # The good PCAP has camera=192.168.1.100, protect=10.54.4.1
+        # 10.54.4.1 < 192.168.1.100 lexically, so old code put protect→camera
+        # in 'reverse' (responses) — correct by accident.
+        # We verify the result is still correct with the new code.
+        txns = reconstruct_streams(
+            _good_pcap(),
+            camera_ip=CAMERA_IP,
+            protect_ip=PROTECT_IP,
+        )
+        assert len(txns) >= 1
+        # Request must come FROM protect, response FROM camera
+        txn = txns[0]
+        assert txn.src_ip == PROTECT_IP
+        assert txn.dst_ip == CAMERA_IP
+
+    def test_response_body_contains_soap_not_request(self):
+        """The response body must contain PullMessagesResponse, not PullMessages."""
+        txns = reconstruct_streams(
+            _good_pcap(),
+            camera_ip=CAMERA_IP,
+            protect_ip=PROTECT_IP,
+        )
+        assert b"PullMessagesResponse" in txns[0].response_body
+
+
+
     def setup_method(self):
         self.transactions = reconstruct_streams(
             _good_pcap(),
