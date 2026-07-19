@@ -1,0 +1,10 @@
+# Runtime
+paramiko>=3.0
+onvif-zeep>=0.2.12
+lxml>=4.9
+scapy>=2.5
+zeep>=4.2
+
+# Development / testing
+pytest>=7.0
+pytest-cov>=4.0

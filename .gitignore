@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Tool output
+*.pcap
+*.sha256
+evidence_*/
+report.md
+report.html
+evidence.json
+timeline.csv
+timeline.json
+raw/
+
+# IDE
+.vscode/
+.idea/
+*.swp
