@@ -323,7 +323,12 @@ def _parse_notification_message(
     utc = _parse_utc(utc_str)
     if utc is None:
         log.warning("Could not parse UtcTime=%r in NotificationMessage", utc_str)
-        utc = datetime.now(tz=timezone.utc)
+        # Do not substitute datetime.now() — that would invent evidence.
+        # Use a sentinel so the caller knows the timestamp is absent.
+        utc = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        timestamp_valid = False
+    else:
+        timestamp_valid = True
 
     operation = msg.get("PropertyOperation", "")
 
@@ -411,7 +416,10 @@ def _parse_subscription_response(
     termination_time = _parse_utc(termination_str)
 
     current_str = _first_text(envelope, ".//*[local-name()='CurrentTime']")
-    utc = _parse_utc(current_str) or datetime.now(tz=timezone.utc)
+    utc = _parse_utc(current_str)
+    if utc is None:
+        # No camera-provided time — use epoch sentinel rather than datetime.now()
+        utc = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
     return SubscriptionEvent(
         utc=utc,

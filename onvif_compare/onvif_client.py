@@ -101,7 +101,11 @@ def _parse_notification(notification, source: EventSource) -> Optional[MotionEve
     topic = str(getattr(topic_obj, "_value_1", "") or "").strip()
 
     utc_str = element.get("UtcTime", "")
-    utc = _parse_utc(utc_str) or datetime.now(tz=timezone.utc)
+    utc = _parse_utc(utc_str)
+    if utc is None:
+        # Do not substitute datetime.now() — that would invent evidence.
+        utc = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        log.warning("Missing or unparseable UtcTime in notification; using epoch sentinel")
     operation = element.get("PropertyOperation", "")
 
     source_el = element.xpath("./*[local-name()='Source']")
