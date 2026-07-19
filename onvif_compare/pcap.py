@@ -302,6 +302,11 @@ def _is_request(headers_block: bytes) -> bool:
     return first.startswith(b"POST") or first.startswith(b"GET")
 
 
+def _is_unframed(headers_block: bytes) -> bool:
+    """Return True if this message was marked as unframed by the parser."""
+    return b"X-Onvif-Compare-Unframed: true" in headers_block
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -630,10 +635,20 @@ def _split_http_messages(data: bytes) -> List[Tuple[bytes, bytes]]:
             pos = body_start + consumed
             continue
 
-        # No length information — consume the rest
+        # No Content-Length and no chunked encoding.
+        # On a persistent (keep-alive) connection this means we cannot
+        # determine where this message ends without a connection-close.
+        # Consuming the rest of the stream would merge subsequent HTTP
+        # messages into one body.  Mark this message as unframed and stop
+        # parsing this stream — do not silently corrupt later messages.
+        log.debug(
+            "HTTP message at offset %d has no Content-Length and no "
+            "chunked encoding; marking as unframed and stopping stream parse",
+            pos,
+        )
         raw_body = data[body_start:]
         body = _extract_body(hdrs, raw_body)
-        messages.append((hdrs, body))
+        messages.append((hdrs + b"\r\nX-Onvif-Compare-Unframed: true", body))
         break
 
     return messages
@@ -731,6 +746,12 @@ def extract_transactions(
         resp_operation = SoapOperation.UNKNOWN
 
         if _is_soap(txn.response_body):
+            if _is_unframed(txn.raw_response_headers):
+                log.warning(
+                    "Stream %d: response body has no Content-Length or chunked "
+                    "encoding; body boundary is uncertain — treating as unframed",
+                    txn.tcp_stream,
+                )
             try:
                 resp_operation, parsed = parse_envelope(
                     txn.response_body,
