@@ -192,6 +192,27 @@ def _render_markdown(bundle: EvidenceBundle) -> str:
     m(f"| SHA-256 | `{meta.pcap_sha256}` |")
     m("")
 
+    # --- Capture quality ---
+    quality = bundle.capture_quality
+    m("## Capture Quality")
+    m("")
+    m("| Metric | Value |")
+    m("|---|---|")
+    m(f"| Traffic classification | `{quality.traffic_classification.value}` |")
+    m(f"| Protect packets captured | {quality.protect_packets_seen} |")
+    m(f"| Protect TCP connections | {quality.protect_tcp_connections} |")
+    m(f"| Protect PullMessages requests | {quality.protect_pullmessages_requests} |")
+    m(f"| Protect PullMessages responses | {quality.protect_pullmessages_responses} |")
+    m(f"| Local subscriber packets captured | {quality.local_packets_seen} |")
+    m(f"| Local PullMessages requests | {quality.local_pullmessages_requests} |")
+    m("")
+    if quality.warnings:
+        m("**Quality warnings:**")
+        m("")
+        for w in quality.warnings:
+            m(f"- ⚠ {w}")
+        m("")
+
     # --- Summary ---
     protect_txns = bundle.protect_transactions
     local_events = bundle.local_events
@@ -547,6 +568,7 @@ class ReportWriter:
         print(f"Camera:                    {meta.camera_ip}:{meta.camera_port}")
         print(f"Protect IP:                {meta.protect_ip}")
         print(f"Capture duration:          {meta.duration_seconds} s")
+        print(f"Capture quality:           {bundle.capture_quality.traffic_classification.value}")
         print()
         print(f"Local IsMotion=true:       {local_true}")
         print(f"Local IsMotion=false:      {local_false}")
