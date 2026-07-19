@@ -424,21 +424,28 @@ evidence_YYYYMMDD_HHMMSS/
 └── raw/
     ├── protect/
     │   ├── requests/
-    │   │   └── stream_012_req.xml    # Exact captured bytes of SOAP request
+    │   │   └── stream_012_req.xml    # Exact captured bytes of Protect’s SOAP request
     │   └── responses/
-    │       └── stream_012_resp.xml   # Exact captured bytes of SOAP response
+    │       └── stream_012_resp.xml   # Exact captured bytes of camera’s SOAP response
     └── local/
         ├── notifications/
-        │   └── notif_001.xml         # Raw NotificationMessage XML
-        ├── requests/
-        └── responses/
+        │   └── notif_001.xml         # Raw NotificationMessage XML from live subscriber
+        ├── requests/             # Local subscriber SOAP requests (from PCAP)
+        ├── responses/            # Local subscriber SOAP responses (from PCAP)
+        └── soap_history/
+            ├── 0001_CreatePullPointSubscription_req.xml
+            ├── 0001_CreatePullPointSubscription_resp.xml
+            ├── 0002_PullMessages_req.xml
+            └── 0002_PullMessages_resp.xml
 ```
 
-The `raw/` directory contains every SOAP envelope **exactly as it appeared on
-the wire** — the bytes are written directly from the PCAP without
-re-serialisation. You can open any file in a text editor or load `capture.pcap`
-directly into Wireshark and navigate to the frame numbers recorded in
-`evidence.json`.
+The `raw/protect/` files contain every SOAP envelope **exactly as it appeared
+on the wire** — written directly from the PCAP without re-serialisation.
+The `raw/local/soap_history/` files contain complete SOAP envelopes captured
+by the Zeep transport plugin, covering every operation the local subscriber
+performed (CreatePullPointSubscription, PullMessages, Renew, Unsubscribe).
+You can load `capture.pcap` directly into Wireshark and navigate to the frame
+numbers recorded in `evidence.json`.
 
 ---
 
