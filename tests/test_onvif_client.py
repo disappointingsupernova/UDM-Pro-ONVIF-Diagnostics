@@ -190,6 +190,16 @@ class TestClassifyConnectError:
         assert "Wrong password" in msg
         assert "--camera-port" in msg
 
+    def test_pullpoint_hint_backtick_variant(self):
+        # Some cameras (e.g. Reolink) use a backtick: "doesn`t"
+        msg = _classify_connect_error(Exception("Device doesn`t support service: pullpoint"))
+        assert "Wrong password" in msg
+
+    def test_pullpoint_hint_unknown_error_prefix(self):
+        # onvif-zeep wraps the message as "Unknown error: Device doesn`t ..."
+        msg = _classify_connect_error(Exception("Unknown error: Device doesn`t support service: pullpoint"))
+        assert "Wrong password" in msg
+
     def test_unknown_error_returns_type_and_message(self):
         msg = _classify_connect_error(ValueError("something unexpected"))
         assert "ValueError" in msg

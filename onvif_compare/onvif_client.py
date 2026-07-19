@@ -158,12 +158,16 @@ _AUTH_HINTS = (
     "bad credentials",
 )
 
-# Phrases that indicate the camera genuinely does not support PullPoint.
+# Phrases that indicate the camera genuinely does not support PullPoint,
+# OR that authentication failed (onvif-zeep conflates the two).
+# Note: some cameras use a backtick in the message: "doesn`t"
 _NO_PULLPOINT_HINTS = (
     "doesn't support service: pullpoint",
+    "doesn`t support service: pullpoint",
     "does not support service: pullpoint",
     "no pullpoint",
     "pullpoint not supported",
+    "support service: pullpoint",   # catch any variant
 )
 
 
