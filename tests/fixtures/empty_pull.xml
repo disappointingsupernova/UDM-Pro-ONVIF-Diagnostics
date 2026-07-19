@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<s:Envelope
+    xmlns:s="http://www.w3.org/2003/05/soap-envelope"
+    xmlns:tev="http://www.onvif.org/ver10/events/wsdl">
+  <s:Body>
+    <tev:PullMessagesResponse>
+      <tev:CurrentTime>2024-03-15T08:41:02.000Z</tev:CurrentTime>
+      <tev:TerminationTime>2024-03-15T08:42:02.000Z</tev:TerminationTime>
+    </tev:PullMessagesResponse>
+  </s:Body>
+</s:Envelope>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body>
+    <s:Fault>
+      <s:Code>
+        <s:Value>s:Receiver</s:Value>
+        <s:Subcode>
+          <s:Value>ter:SubscriptionInvalid</s:Value>
+        </s:Subcode>
+      </s:Code>
+      <s:Reason>
+        <s:Text xml:lang="en">The subscription has expired or does not exist.</s:Text>
+      </s:Reason>
+      <s:Detail>
+        <text>SubscriptionId: urn:uuid:abc123</text>
+      </s:Detail>
+    </s:Fault>
+  </s:Body>
+</s:Envelope>
