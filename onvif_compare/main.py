@@ -24,6 +24,7 @@ import json
 import logging
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -38,7 +39,7 @@ from .models import (
     SubscriptionEvent,
 )
 from .onvif_client import OnvifSubscriber, SubscriberConfig
-from .pcap import extract_transactions, reconstruct_streams
+from .pcap import extract_transactions, pcap_time_bounds, reconstruct_streams
 from .report import ReportWriter, bundle_to_json
 from .timeline import build_observations, build_timeline, correlate
 from .util import format_utc, local_ip_for, sha256_file, utc_now
@@ -353,6 +354,15 @@ def _analyse_pcap(
 ) -> EvidenceBundle:
     """Run the full analysis pipeline on a PCAP file."""
     print(f"Analysing {pcap_path} …")
+
+    # Populate observed time bounds from actual packet timestamps
+    first_ts, last_ts = pcap_time_bounds(str(pcap_path))
+    if first_ts is not None:
+        metadata.observed_start_utc = datetime.fromtimestamp(first_ts, tz=timezone.utc)
+    if last_ts is not None:
+        metadata.observed_end_utc = datetime.fromtimestamp(last_ts, tz=timezone.utc)
+    if first_ts is not None and last_ts is not None:
+        metadata.observed_duration_seconds = round(last_ts - first_ts, 3)
 
     http_transactions = reconstruct_streams(
         str(pcap_path),

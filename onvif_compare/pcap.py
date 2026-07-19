@@ -352,6 +352,25 @@ def read_pcap(path: str) -> Iterator[Tuple[int, Packet, float]]:
             yield i, pkt, ts
 
 
+def pcap_time_bounds(path: str) -> Tuple[Optional[float], Optional[float]]:
+    """Return ``(first_packet_ts, last_packet_ts)`` from a PCAP file.
+
+    Returns ``(None, None)`` if the file is empty or unreadable.
+    """
+    first: Optional[float] = None
+    last: Optional[float] = None
+    try:
+        with PcapReader(path) as reader:
+            for pkt in reader:
+                ts = float(pkt.time)
+                if first is None:
+                    first = ts
+                last = ts
+    except Exception as exc:
+        log.warning("Could not read PCAP time bounds from %s: %s", path, exc)
+    return first, last
+
+
 def reconstruct_streams(
     path: str,
     *,

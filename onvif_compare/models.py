@@ -385,11 +385,21 @@ class CaptureMetadata:
     pcap_sha256:
         SHA-256 hex digest of the PCAP file.
     start_utc:
-        Capture start time in UTC.
+        Wall-clock time when the capture was started (from this machine).
     end_utc:
-        Capture end time in UTC.
+        Wall-clock time when the capture was stopped (from this machine).
     duration_seconds:
-        Requested capture duration.
+        Requested capture duration as passed to ``--duration``.
+    observed_start_utc:
+        Timestamp of the first packet in the PCAP.  ``None`` if the PCAP
+        is empty or has not yet been analysed.
+    observed_end_utc:
+        Timestamp of the last packet in the PCAP.
+    observed_duration_seconds:
+        Actual evidence interval derived from packet timestamps
+        (``observed_end_utc - observed_start_utc``).  May differ from
+        ``duration_seconds`` if tcpdump started late or the capture was
+        interrupted.
     tool_version:
         Version string of this tool.
     """
@@ -407,6 +417,9 @@ class CaptureMetadata:
     end_utc: datetime
     duration_seconds: int
     tool_version: str
+    observed_start_utc: Optional[datetime] = None
+    observed_end_utc: Optional[datetime] = None
+    observed_duration_seconds: Optional[float] = None
 
 
 # ---------------------------------------------------------------------------

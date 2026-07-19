@@ -155,7 +155,15 @@ def _render_markdown(bundle: EvidenceBundle) -> str:
     m(f"| Capture mode | `{meta.capture_mode}` |")
     m(f"| Capture start (UTC) | `{format_utc(meta.start_utc)}` |")
     m(f"| Capture end (UTC) | `{format_utc(meta.end_utc)}` |")
-    m(f"| Duration | `{meta.duration_seconds} s` |")
+    m(f"| Requested duration | `{meta.duration_seconds} s` |")
+    if meta.observed_start_utc:
+        m(f"| First packet (UTC) | `{format_utc(meta.observed_start_utc)}` |")
+    if meta.observed_end_utc:
+        m(f"| Last packet (UTC) | `{format_utc(meta.observed_end_utc)}` |")
+    if meta.observed_duration_seconds is not None:
+        m(f"| Observed duration | `{meta.observed_duration_seconds} s` |")
+    else:
+        m(f"| Observed duration | `unknown (empty PCAP)` |")
     m(f"| PCAP | `{meta.pcap_path}` |")
     m(f"| SHA-256 | `{meta.pcap_sha256}` |")
     m("")
