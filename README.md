@@ -44,19 +44,19 @@ flowchart LR
 ```mermaid
 flowchart TD
     subgraph Capture["Capture layer (capture.py)"]
-        SSH["RemoteCapture\nSSH → UDM Pro\ntcpdump -i INTERFACE"]
+        SSH["RemoteCapture\nSSH → UDM Pro\ntcpdump -i INTERFACE\nUUID-isolated remote paths"]
         LOCAL["LocalCapture\nLocal tcpdump subprocess"]
     end
 
     subgraph Analysis["Analysis layer"]
-        PCAP["pcap.py\nScapy TCP reconstruction\n→ HTTP pairing → SOAP"]
-        ONVIF["onvif_client.py\nIndependent PullPoint\nsubscription + auto-renew"]
-        SOAP["soap.py\nlxml SOAP parser\nPullMessages / Notify / Fault"]
+        PCAP["pcap.py\nScapy TCP reconstruction\n→ HTTP pairing → SOAP\nRetransmission-aware\nPer-message timestamps"]
+        ONVIF["onvif_client.py\nIndependent PullPoint\nsubscription + auto-renew\nZeep history plugin"]
+        SOAP["soap.py\nlxml SOAP parser\nPullMessages / Notify / Fault\nPartial notifications preserved"]
     end
 
     subgraph Core["Core"]
-        MODELS["models.py\nDataclasses — single source of truth\nMotionEvent · PullTransaction\nSoapFault · CorrelationRecord\nTimelineEntry · EvidenceBundle"]
-        TIMELINE["timeline.py\nChronological event stream\nCorrelation engine\nneareast_before / after / absolute"]
+        MODELS["models.py\nDataclasses — single source of truth\nMotionEvent · PullTransaction\nSoapFault · CorrelationRecord\nTimelineEntry · EvidenceBundle\nCaptureQuality · LocalSoapRecord"]
+        TIMELINE["timeline.py\nChronological event stream\nCorrelation engine\nnearest_before / after / absolute"]
     end
 
     subgraph Output["Output layer (report.py)"]
@@ -64,7 +64,7 @@ flowchart TD
         HTML["report.html"]
         JSON["evidence.json"]
         CSV["timeline.csv / timeline.json"]
-        BUNDLE["raw/\nprotect/requests|responses\nlocal/requests|responses|notifications"]
+        BUNDLE["raw/\nExact captured bytes\nprotect/requests|responses\nlocal/requests|responses|notifications"]
     end
 
     SSH --> PCAP
@@ -85,10 +85,10 @@ flowchart TD
 ```mermaid
 flowchart LR
     PCAP_FILE["capture.pcap"]
-    TCP["TCP stream\nreconstruction\n(Scapy)"]
-    HTTP["HTTP request /\nresponse pairing"]
-    SOAP_ENV["SOAP envelope\nextraction"]
-    LXML["lxml parse"]
+    TCP["TCP stream\nreconstruction\n(Scapy)\nRetransmission-safe\nOverlap-aware"]
+    HTTP["HTTP request /\nresponse pairing\nPer-message timestamps\n1xx skipped"]
+    SOAP_ENV["SOAP envelope\nextraction\nExact bytes retained"]
+    LXML["lxml parse\nPartial events\npreserved"]
     OBJ["Python dataclasses\nPullTransaction\nMotionEvent\nSoapFault"]
     TL["Timeline\n(sorted by UTC)"]
     RPT["Evidence bundle\nreport.md + HTML\nevidence.json"]
@@ -117,6 +117,33 @@ flowchart TD
     CLASSIFY --> REPORT
 ```
 
+### Capture quality gate
+
+```mermaid
+flowchart TD
+    PCAP["PCAP analysed"]
+    Q1{"Protect packets\ncaptured?"}
+    Q2{"PullMessages\nrequests seen?"}
+    Q3{"PullMessages\nresponses seen?"}
+    Q4{"Notifications\nin responses?"}
+
+    NO_TRAFFIC["NO_PROTECT_TRAFFIC\n⚠ Cannot draw conclusions"]
+    NO_PULL["PROTECT_TRAFFIC_NO_PULLMESSAGES\n⚠ Protect may not be subscribed"]
+    NO_RESP["PULLMESSAGES_NO_RESPONSE\n⚠ Capture may be incomplete"]
+    EMPTY["PULLMESSAGES_RESPONSE_EMPTY\n✓ Valid evidence of empty responses"]
+    WITH_NOTIF["PULLMESSAGES_RESPONSE_WITH_NOTIFICATIONS\n✓ Notifications confirmed"]
+
+    PCAP --> Q1
+    Q1 -->|No| NO_TRAFFIC
+    Q1 -->|Yes| Q2
+    Q2 -->|No| NO_PULL
+    Q2 -->|Yes| Q3
+    Q3 -->|No| NO_RESP
+    Q3 -->|Yes| Q4
+    Q4 -->|No| EMPTY
+    Q4 -->|Yes| WITH_NOTIF
+```
+
 ---
 
 ## Modules
@@ -124,13 +151,13 @@ flowchart TD
 | Module | Responsibility |
 |---|---|
 | `models.py` | All dataclasses. No logic. Single source of truth for every data structure. |
-| `capture.py` | `RemoteCapture` (SSH + tcpdump) and `LocalCapture` (subprocess). Interface auto-discovery. SFTP download. |
-| `onvif_client.py` | Independent PullPoint subscription. Auto-renews on expiry. Thread-safe event collection. |
-| `pcap.py` | Scapy TCP stream reconstruction → HTTP request/response pairing → SOAP extraction. No tshark. |
-| `soap.py` | lxml SOAP parser. Handles PullMessagesResponse, CreatePullPointSubscription, Renew, Unsubscribe, Notify, Fault. |
-| `timeline.py` | Chronological event stream. Correlation engine (nearest_before / nearest_after / nearest_absolute). |
-| `report.py` | Markdown + HTML from the same `EvidenceBundle`. Raw XML saving. JSON / CSV timeline export. |
-| `util.py` | SHA-256 hashing, UTC timestamps, local IP discovery, stream label formatting. |
+| `capture.py` | `RemoteCapture` (SSH + tcpdump, UUID-isolated paths) and `LocalCapture` (subprocess). Interface auto-discovery. SFTP download. |
+| `onvif_client.py` | Independent PullPoint subscription. Auto-renews on expiry. Thread-safe event collection. Zeep history plugin captures complete SOAP envelopes. |
+| `pcap.py` | Scapy TCP stream reconstruction (retransmission-aware, overlap-safe) → HTTP pairing (per-message timestamps) → SOAP extraction. No tshark. |
+| `soap.py` | lxml SOAP parser. Handles PullMessagesResponse, CreatePullPointSubscription, Renew, Unsubscribe, Notify, Fault. Preserves malformed notifications as partial evidence. |
+| `timeline.py` | Chronological event stream. Correlation engine (nearest_before / nearest_after / nearest_absolute). Capture quality observations. |
+| `report.py` | Markdown + HTML from the same `EvidenceBundle`. Saves exact captured bytes to disk. JSON / CSV timeline export. |
+| `util.py` | SHA-256 hashing (file and in-memory), UTC timestamps, local IP discovery, stream label formatting. |
 | `main.py` | Argument parsing. Subcommands: `capture`, `analyse`, `report`. |
 
 ---
@@ -368,7 +395,6 @@ python3 -m onvif_compare analyse --pcap capture.pcap \
 ### `report` — regenerate report from evidence.json
 
 Re-renders `report.md` and `report.html` from an existing `evidence.json`.
-Useful after updating the report renderer without re-running a capture.
 
 ```bash
 onvif-compare report --evidence evidence_20240315_084100/evidence.json
@@ -376,8 +402,9 @@ onvif-compare report --evidence evidence_20240315_084100/evidence.json
 python3 -m onvif_compare report --evidence evidence_20240315_084100/evidence.json
 ```
 
-> **Note:** Full JSON deserialisation is not yet implemented. Use `analyse`
-> to regenerate from the original PCAP if you need updated analysis results.
+> **Note:** Full JSON deserialisation is not yet implemented. The command
+> returns exit code 2 and prints the exact `analyse` command to run instead.
+> Use `analyse` with the original PCAP to regenerate the report.
 
 ---
 
@@ -397,9 +424,9 @@ evidence_YYYYMMDD_HHMMSS/
 └── raw/
     ├── protect/
     │   ├── requests/
-    │   │   └── stream_012_req.xml    # Raw SOAP request from Protect
+    │   │   └── stream_012_req.xml    # Exact captured bytes of SOAP request
     │   └── responses/
-    │       └── stream_012_resp.xml   # Raw SOAP response to Protect
+    │       └── stream_012_resp.xml   # Exact captured bytes of SOAP response
     └── local/
         ├── notifications/
         │   └── notif_001.xml         # Raw NotificationMessage XML
@@ -407,8 +434,9 @@ evidence_YYYYMMDD_HHMMSS/
         └── responses/
 ```
 
-The `raw/` directory contains every SOAP envelope exactly as it appeared on
-the wire. You can open any file in a text editor or load `capture.pcap`
+The `raw/` directory contains every SOAP envelope **exactly as it appeared on
+the wire** — the bytes are written directly from the PCAP without
+re-serialisation. You can open any file in a text editor or load `capture.pcap`
 directly into Wireshark and navigate to the frame numbers recorded in
 `evidence.json`.
 
@@ -449,6 +477,13 @@ JSON:    /home/user/evidence_20240315_084100/evidence.json
 ======================================================
 ```
 
+During capture, motion events are printed in real time as they arrive:
+
+```
+[LOCAL 08:41:01.123] Changed IsMotion=true
+[LOCAL 08:41:05.456] Changed IsMotion=false State=false
+```
+
 The tool records observations. It does not assign blame.
 
 ---
@@ -459,14 +494,14 @@ Both `report.md` and `report.html` contain:
 
 | Section | Contents |
 |---|---|
-| Environment | Camera IP/port/user, Protect IP, interface, capture host/mode, start/end UTC, duration, PCAP path, SHA-256 |
+| Environment | Camera IP/port/user, Protect IP, interface, capture host/mode, start/end UTC, requested duration, first/last packet UTC, observed duration, PCAP path, SHA-256 |
 | Summary | Counts of local events, Protect polls, notifications, empty responses, faults |
 | Timeline | Every event in UTC order — polls, motion events, faults, subscriptions |
 | Protect PullMessages Transactions | Per-transaction table with HTTP status, notification count, fault code, stream index, frame numbers, links to raw XML |
 | SOAP Faults | Fault code, subcode, reason, HTTP status, stream, frame (only if faults present) |
 | Protect Notifications | Topic, UTC, IsMotion, State (only if notifications present) |
 | Correlation | Local motion event → nearest Protect poll before/after (ms) → result |
-| Observations | Ordered factual statements, no blame attribution |
+| Observations | Ordered factual statements including capture quality warnings; no blame attribution |
 
 ---
 
@@ -486,6 +521,23 @@ PullMessages poll within the configured window:
 
 ---
 
+## Capture quality classification
+
+Before drawing any conclusions the tool classifies what traffic was actually
+observed in the PCAP:
+
+| Classification | Meaning |
+|---|---|
+| `no_protect_traffic_captured` | No packets between Protect and the camera were seen. Zero notifications **cannot** be used as evidence. |
+| `protect_traffic_captured_no_pullmessages` | Protect traffic was seen but no PullMessages requests. Protect may not have been subscribed. |
+| `pullmessages_captured_no_response` | PullMessages requests were seen but no responses. Capture may be incomplete. |
+| `pullmessages_response_empty` | Responses were captured and contained zero notifications. Valid evidence. |
+| `pullmessages_response_with_notifications` | Responses contained notifications. |
+
+Quality warnings appear in the Observations section of the report.
+
+---
+
 ## Provenance
 
 Every object in the evidence bundle records where it came from:
@@ -494,9 +546,14 @@ Every object in the evidence bundle records where it came from:
 |---|---|
 | `source` | `"protect"` / `"local"` / `"camera"` / `"unknown"` |
 | `tcp_stream` | Scapy TCP stream index — paste into Wireshark's stream filter |
-| `request_frame` / `response_frame` | PCAP frame numbers for direct Wireshark lookup |
-| `raw_xml` | The original XML string, never discarded |
-| `request_xml_path` / `response_xml_path` | Relative path to the saved XML file in `raw/` |
+| `request_frame` / `response_frame` | Per-message PCAP frame numbers for direct Wireshark lookup |
+| `raw_xml` | Re-serialised XML (pretty-printed by lxml) |
+| `raw_body_bytes` | Exact captured bytes — never modified |
+| `body_sha256` / `request_body_sha256` / `response_body_sha256` | SHA-256 of exact bytes for chain of custody |
+| `request_xml_path` / `response_xml_path` | Relative path to the saved file in `raw/` |
+| `parse_status` | `"ok"` or `"partial"` — partial notifications are preserved, not discarded |
+| `parse_warnings` | List of issues found during parsing |
+| `timestamp_valid` | `False` when the camera's `UtcTime` was absent or unparseable |
 
 Live subscriber events (from `onvif_client.py`) set `tcp_stream = -1` and
 `frame_number = -1` because they are not captured from the PCAP.
@@ -507,11 +564,16 @@ Live subscriber events (from `onvif_client.py`) set `tcp_stream = -1` and
 
 - **No tshark.** The parser never invokes tshark or parses its text output.
 - **No regex XML.** XML is always parsed with lxml. Never located by regex.
-- **No data loss.** Every parsed object retains its original raw XML.
-- **Full provenance.** Every event records its source, TCP stream, and frame numbers.
+- **No data loss.** Every parsed object retains its original raw bytes and re-serialised XML.
+- **No invented timestamps.** Missing or unparseable `UtcTime` uses an epoch sentinel (`1970-01-01`), never `datetime.now()`.
+- **Full provenance.** Every event records its source, TCP stream, and per-message frame numbers.
 - **Evidence-based conclusions.** The tool classifies observations; it does not assign blame.
+- **Capture quality gates.** Zero notifications is only reported as evidence when the capture affirmatively shows Protect polling.
+- **Partial notifications preserved.** Malformed or vendor-specific notifications are returned as `parse_status="partial"` rather than discarded.
 - **Scapy only.** If Scapy is unavailable the tool fails with a clear error rather than falling back silently.
+- **Retransmission-safe TCP reconstruction.** Duplicate segments are deduplicated; overlapping bytes are counted.
 - **Capture abstraction.** `RemoteCapture` and `LocalCapture` both implement `CaptureBackend`. Adding a new capture backend requires no changes to the analysis engine.
+- **UUID-isolated remote captures.** Each run uses `/tmp/onvif-compare-<uuid>/` so concurrent runs never collide.
 
 ---
 
@@ -523,15 +585,15 @@ pytest
 ```
 
 ```
-148 tests · 0 failures
+178 tests · 0 failures
 ```
 
 | Test file | Module under test | Tests |
 |---|---|---|
-| `test_soap.py` | `soap.py` | 35 |
-| `test_pcap.py` | `pcap.py` | 27 |
-| `test_capture.py` | `capture.py` | 9 |
-| `test_onvif_client.py` | `onvif_client.py` | 26 |
+| `test_soap.py` | `soap.py` | 41 |
+| `test_pcap.py` | `pcap.py` | 40 |
+| `test_capture.py` | `capture.py` | 10 |
+| `test_onvif_client.py` | `onvif_client.py` | 36 |
 | `test_timeline.py` | `timeline.py` | 21 |
 | `test_report.py` | `report.py` | 30 |
 
@@ -545,11 +607,15 @@ regression tests referencing them.
 ## Known limitations
 
 - The `report` subcommand re-render path is a stub. Full JSON deserialisation
-  back to `EvidenceBundle` is not yet implemented. Use `analyse` to
-  regenerate from the original PCAP.
+  back to `EvidenceBundle` is not yet implemented. The command returns exit
+  code 2 and prints the exact `analyse` command to run instead.
 - `LocalCapture` interface auto-discovery uses `ip -brief link`, which is
   Linux-only. On Windows, pass `--interface` explicitly.
 - The ONVIF subscriber does not yet proactively renew the lease before
   expiry. It recreates the subscription on any exception, which is
   functionally equivalent but produces a log warning on cameras (such as
   Reolink) that terminate subscriptions after ~60 s.
+- The Zeep history plugin (`_SoapHistoryPlugin`) captures SOAP envelopes
+  from the local subscriber but these are not yet written to the `raw/local/`
+  directory in the evidence bundle. They are available in `subscriber.soap_history`
+  for programmatic access.
