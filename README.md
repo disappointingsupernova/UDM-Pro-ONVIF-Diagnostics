@@ -150,13 +150,13 @@ flowchart TD
 
 | Module | Responsibility |
 |---|---|
-| `models.py` | All dataclasses. No logic. Single source of truth for every data structure. |
+| `models.py` | All dataclasses. No logic. Single source of truth for every data structure. Includes `NotificationDiagnosis` enum for structural failure classification. |
 | `capture.py` | `RemoteCapture` (SSH + tcpdump, UUID-isolated paths) and `LocalCapture` (subprocess). Interface auto-discovery. SFTP download. |
-| `onvif_client.py` | Independent PullPoint subscription. Auto-renews on expiry. Thread-safe event collection. Zeep history plugin captures complete SOAP envelopes. |
-| `pcap.py` | Scapy TCP stream reconstruction (retransmission-aware, overlap-safe) → HTTP pairing (per-message timestamps) → SOAP extraction. No tshark. |
-| `soap.py` | lxml SOAP parser. Handles PullMessagesResponse, CreatePullPointSubscription, Renew, Unsubscribe, Notify, Fault. Preserves malformed notifications as partial evidence. |
-| `timeline.py` | Chronological event stream. Correlation engine (nearest_before / nearest_after / nearest_absolute). Capture quality observations. |
-| `report.py` | Markdown + HTML from the same `EvidenceBundle`. Saves exact captured bytes to disk. JSON / CSV timeline export. |
+| `onvif_client.py` | Independent PullPoint subscription. Auto-renews on expiry. Thread-safe event collection. Zeep history plugin captures complete SOAP envelopes into `raw/local/soap_history/`. |
+| `pcap.py` | Scapy TCP stream reconstruction (retransmission-aware, overlap-safe) → HTTP pairing (per-message timestamps, 1xx skipped) → SOAP extraction. No tshark. |
+| `soap.py` | lxml SOAP parser. Handles PullMessagesResponse, CreatePullPointSubscription, Renew, Unsubscribe, Notify, Fault. Preserves malformed notifications as partial evidence with specific structural diagnosis. |
+| `timeline.py` | Chronological event stream. Correlation engine (nearest_before / nearest_after / nearest_absolute). Capture quality observations. Response latency inference. Short lease detection. Diagnosis summaries. |
+| `report.py` | Markdown + HTML from the same `EvidenceBundle`. Saves exact captured bytes to disk. Capture Quality section. Diagnostic Analysis section for partial notifications. JSON / CSV timeline export. |
 | `util.py` | SHA-256 hashing (file and in-memory), UTC timestamps, local IP discovery, stream label formatting. |
 | `main.py` | Argument parsing. Subcommands: `capture`, `analyse`, `report`. |
 
@@ -593,7 +593,8 @@ Live subscriber events (from `onvif_client.py`) set `tcp_stream = -1` and
 - **Full provenance.** Every event records its source, TCP stream, and per-message frame numbers.
 - **Evidence-based conclusions.** The tool classifies observations; it does not assign blame.
 - **Capture quality gates.** Zero notifications is only reported as evidence when the capture affirmatively shows Protect polling.
-- **Partial notifications preserved.** Malformed or vendor-specific notifications are returned as `parse_status="partial"` rather than discarded.
+- **Partial notifications preserved.** Malformed or vendor-specific notifications are returned as `parse_status="partial"` with a specific `NotificationDiagnosis` rather than discarded.
+- **Structural diagnosis.** Every partial notification is classified with a specific failure mode (wrong namespace, missing element, wrong item name, etc.) with plain-English explanation.
 - **Scapy only.** If Scapy is unavailable the tool fails with a clear error rather than falling back silently.
 - **Retransmission-safe TCP reconstruction.** Duplicate segments are deduplicated; overlapping bytes are counted.
 - **Capture abstraction.** `RemoteCapture` and `LocalCapture` both implement `CaptureBackend`. Adding a new capture backend requires no changes to the analysis engine.
