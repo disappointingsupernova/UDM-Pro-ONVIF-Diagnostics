@@ -175,6 +175,54 @@ class TestParseNotification:
         assert event.frame_number == -1
 
 
+class TestSoapHistoryPlugin:
+    def _make_envelope(self, tag: str = "PullMessages") -> "etree._Element":
+        from lxml import etree
+        return etree.fromstring(
+            f'<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">'
+            f'<s:Body><tev:{tag} xmlns:tev="http://www.onvif.org/ver10/events/wsdl"/>'
+            f'</s:Body></s:Envelope>'.encode()
+        )
+
+    def test_egress_stores_pending(self):
+        from onvif_compare.onvif_client import _SoapHistoryPlugin
+        plugin = _SoapHistoryPlugin()
+        env = self._make_envelope()
+        plugin.egress(env, {}, type('Op', (), {'name': 'PullMessages'})(), {})
+        assert plugin._pending_operation == "PullMessages"
+        assert plugin._pending_request is not None
+
+    def test_ingress_creates_record(self):
+        from onvif_compare.onvif_client import _SoapHistoryPlugin
+        plugin = _SoapHistoryPlugin()
+        req_env = self._make_envelope("PullMessages")
+        resp_env = self._make_envelope("PullMessagesResponse")
+        plugin.egress(req_env, {}, type('Op', (), {'name': 'PullMessages'})(), {})
+        plugin.ingress(resp_env, {}, type('Op', (), {'name': 'PullMessages'})())
+        assert len(plugin.records) == 1
+        assert plugin.records[0].operation == "PullMessages"
+        assert "PullMessages" in plugin.records[0].request_envelope
+        assert "PullMessagesResponse" in plugin.records[0].response_envelope
+
+    def test_sha256_populated(self):
+        from onvif_compare.onvif_client import _SoapHistoryPlugin
+        plugin = _SoapHistoryPlugin()
+        env = self._make_envelope()
+        plugin.egress(env, {}, type('Op', (), {'name': 'PullMessages'})(), {})
+        plugin.ingress(env, {}, type('Op', (), {'name': 'PullMessages'})())
+        assert len(plugin.records[0].request_sha256) == 64
+        assert len(plugin.records[0].response_sha256) == 64
+
+    def test_max_records_enforced(self):
+        from onvif_compare.onvif_client import _SoapHistoryPlugin
+        plugin = _SoapHistoryPlugin(max_records=3)
+        env = self._make_envelope()
+        for _ in range(5):
+            plugin.egress(env, {}, type('Op', (), {'name': 'PullMessages'})(), {})
+            plugin.ingress(env, {}, type('Op', (), {'name': 'PullMessages'})())
+        assert len(plugin.records) == 3
+
+
 class TestClassifyConnectError:
     def test_auth_hint_401(self):
         msg = _classify_connect_error(Exception("401 Unauthorized"))

@@ -15,6 +15,10 @@ Design
   ~60 s), it recreates it transparently and logs the renewal count.
 - Thread-safe: ``events`` is a list appended under a ``threading.Lock``.
 - Never raises from the polling loop; errors are recorded in ``errors``.
+- A Zeep history plugin captures complete outgoing and incoming SOAP
+  envelopes for every operation (CreatePullPointSubscription, PullMessages,
+  Renew, Unsubscribe).  These are stored in ``soap_history`` as
+  ``LocalSoapRecord`` objects.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ from typing import List, Optional
 from lxml import etree
 
 from .models import EventSource, MotionEvent, SimpleItem, SubscriptionEvent, SoapOperation
+from .util import sha256_bytes
 
 log = logging.getLogger(__name__)
 
@@ -140,6 +145,91 @@ def _parse_notification(notification, source: EventSource) -> Optional[MotionEve
         frame_number=-1,
         raw_xml=raw_xml,
     )
+
+
+# ---------------------------------------------------------------------------
+# Local SOAP history
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class LocalSoapRecord:
+    """One complete outgoing request / incoming response pair from the local subscriber.
+
+    Captured via the Zeep history plugin so the complete SOAP envelopes
+    are available for the evidence bundle regardless of whether the traffic
+    was captured by tcpdump.
+
+    Attributes
+    ----------
+    operation:
+        The SOAP operation name (e.g. ``"PullMessages"``).
+    request_envelope:
+        The complete outgoing SOAP envelope as a string.
+    response_envelope:
+        The complete incoming SOAP envelope as a string.
+    request_sha256:
+        SHA-256 hex digest of the request envelope bytes.
+    response_sha256:
+        SHA-256 hex digest of the response envelope bytes.
+    utc:
+        Timestamp when the request was sent.
+    """
+
+    operation: str
+    request_envelope: str
+    response_envelope: str
+    request_sha256: str
+    response_sha256: str
+    utc: datetime
+
+
+class _SoapHistoryPlugin:
+    """Zeep plugin that records every outgoing request and incoming response.
+
+    Attach to a zeep ``Client`` via the ``plugins`` parameter.  After each
+    call, ``records`` contains a ``LocalSoapRecord`` for that exchange.
+
+    Only the most recent ``max_records`` entries are kept to bound memory
+    usage during long captures.
+    """
+
+    def __init__(self, max_records: int = 500) -> None:
+        self.records: List[LocalSoapRecord] = []
+        self._max = max_records
+        self._pending_request: Optional[bytes] = None
+        self._pending_operation: str = ""
+        self._pending_utc: Optional[datetime] = None
+
+    def egress(self, envelope, http_headers, operation, binding_options):
+        """Called by Zeep before sending a request."""
+        try:
+            self._pending_request = etree.tostring(envelope, encoding="unicode").encode()
+            self._pending_operation = getattr(operation, "name", str(operation))
+            self._pending_utc = datetime.now(tz=timezone.utc)
+        except Exception:
+            pass
+        return envelope, http_headers
+
+    def ingress(self, envelope, http_headers, operation):
+        """Called by Zeep after receiving a response."""
+        try:
+            resp_bytes = etree.tostring(envelope, encoding="unicode").encode()
+            req_bytes = self._pending_request or b""
+            record = LocalSoapRecord(
+                operation=self._pending_operation,
+                request_envelope=req_bytes.decode(errors="replace"),
+                response_envelope=resp_bytes.decode(errors="replace"),
+                request_sha256=sha256_bytes(req_bytes),
+                response_sha256=sha256_bytes(resp_bytes),
+                utc=self._pending_utc or datetime.now(tz=timezone.utc),
+            )
+            self.records.append(record)
+            if len(self.records) > self._max:
+                self.records = self.records[-self._max:]
+        except Exception:
+            pass
+        return envelope, http_headers
 
 
 # ---------------------------------------------------------------------------
@@ -272,9 +362,11 @@ class OnvifSubscriber:
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._ready = threading.Event()
+        self._history_plugin = _SoapHistoryPlugin()
 
         self.events: List[MotionEvent] = []
         self.subscription_events: List[SubscriptionEvent] = []
+        self.soap_history: List[LocalSoapRecord] = []
         self.errors: List[str] = []
         self.multiple_subscription_supported: Optional[bool] = None
 
@@ -362,7 +454,13 @@ class OnvifSubscriber:
             ) from exc
 
         cfg = self._cfg
-        camera = ONVIFCamera(cfg.camera_ip, cfg.camera_port, cfg.username, cfg.password)
+        camera = ONVIFCamera(
+            cfg.camera_ip,
+            cfg.camera_port,
+            cfg.username,
+            cfg.password,
+            plugins=[self._history_plugin],
+        )
         pullpoint = camera.create_pullpoint_service()
         return camera, pullpoint
 
@@ -373,6 +471,10 @@ class OnvifSubscriber:
                 "Timeout": timedelta(seconds=cfg.pull_timeout_s),
                 "MessageLimit": cfg.pull_limit,
             })
+            # Collect any new SOAP history records
+            with self._lock:
+                self.soap_history.extend(self._history_plugin.records)
+                self._history_plugin.records.clear()
             for notification in getattr(response, "NotificationMessage", None) or []:
                 event = _parse_notification(notification, cfg.source)
                 if event is not None:
