@@ -43,6 +43,7 @@ from .models import (
     TimelineEntry,
     TimelineEventKind,
 )
+from .onvif_client import LocalSoapRecord
 from .util import format_utc, sha256_file
 
 log = logging.getLogger(__name__)
@@ -136,6 +137,16 @@ def save_raw_xml(
     for i, event in enumerate(bundle.local_events, start=1):
         notif_path = raw_dir / "local" / "notifications" / f"notif_{i:03d}.xml"
         _save(notif_path, event.raw_xml)
+
+    # Write local subscriber SOAP history (CreatePullPointSubscription,
+    # PullMessages, Renew, Unsubscribe — complete envelopes from Zeep plugin)
+    for i, record in enumerate(bundle.local_soap_history, start=1):
+        slug = f"{i:04d}_{record.operation}"
+        req_path = raw_dir / "local" / "soap_history" / f"{slug}_req.xml"
+        resp_path = raw_dir / "local" / "soap_history" / f"{slug}_resp.xml"
+        req_path.parent.mkdir(parents=True, exist_ok=True)
+        req_path.write_text(record.request_envelope, encoding="utf-8")
+        resp_path.write_text(record.response_envelope, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

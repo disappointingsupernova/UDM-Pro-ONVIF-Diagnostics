@@ -250,6 +250,7 @@ def _cmd_capture(args: argparse.Namespace) -> int:
         protect_ip=args.protect_ip,
         local_ip=local_ip,
         local_events=subscriber.events,
+        local_soap_history=subscriber.soap_history,
         metadata=metadata,
         correlation_window_ms=args.correlation_window,
     )
@@ -295,6 +296,7 @@ def _cmd_analyse(args: argparse.Namespace) -> int:
         protect_ip=args.protect_ip,
         local_ip=args.local_ip,
         local_events=[],
+        local_soap_history=[],
         metadata=metadata,
         correlation_window_ms=args.correlation_window,
     )
@@ -349,6 +351,7 @@ def _analyse_pcap(
     protect_ip: str,
     local_ip: Optional[str],
     local_events: List[MotionEvent],
+    local_soap_history: list,
     metadata: CaptureMetadata,
     correlation_window_ms: int,
 ) -> EvidenceBundle:
@@ -408,6 +411,7 @@ def _analyse_pcap(
             protect_transactions=protect_txns,
             local_transactions=local_txns,
         ),
+        local_soap_history=local_soap_history,
     )
     bundle.observations = build_observations(bundle)
 

@@ -551,4 +551,5 @@ class EvidenceBundle:
     correlations: List[CorrelationRecord]
     observations: List[str]
     capture_quality: CaptureQuality = field(default_factory=CaptureQuality)
+    local_soap_history: List[object] = field(default_factory=list)  # List[LocalSoapRecord]
     extra: Dict[str, object] = field(default_factory=dict)
