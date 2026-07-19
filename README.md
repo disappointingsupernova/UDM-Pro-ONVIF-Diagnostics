@@ -562,8 +562,18 @@ Every object in the evidence bundle records where it came from:
 | `body_sha256` / `request_body_sha256` / `response_body_sha256` | SHA-256 of exact bytes for chain of custody |
 | `request_xml_path` / `response_xml_path` | Relative path to the saved file in `raw/` |
 | `parse_status` | `"ok"` or `"partial"` — partial notifications are preserved, not discarded |
-| `parse_warnings` | List of issues found during parsing |
+| `parse_warnings` | List of human-readable issues found during parsing |
 | `timestamp_valid` | `False` when the camera's `UtcTime` was absent or unparseable |
+| `diagnosis` | `NotificationDiagnosis` enum value classifying the specific structural failure (e.g. `utctime_absent`, `ismotion_item_wrong_name`) |
+| `actual_namespaces` | Dict of XML namespace prefix → URI as used by the camera in that notification |
+
+`CaptureMetadata` additionally records:
+
+| Field | Description |
+|---|---|
+| `observed_start_utc` | Timestamp of the first packet in the PCAP |
+| `observed_end_utc` | Timestamp of the last packet in the PCAP |
+| `observed_duration_seconds` | Actual evidence interval from packet timestamps (may differ from `--duration` if capture started late or was interrupted) |
 
 Live subscriber events (from `onvif_client.py`) set `tcp_stream = -1` and
 `frame_number = -1` because they are not captured from the PCAP.
