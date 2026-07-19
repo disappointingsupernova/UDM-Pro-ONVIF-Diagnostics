@@ -444,7 +444,12 @@ class OnvifSubscriber:
                 time.sleep(1)
 
     def _connect(self):
-        """Create a new ONVIFCamera and PullPoint service."""
+        """Create a new ONVIFCamera and PullPoint service.
+
+        The Zeep history plugin is attached by appending it to the zeep
+        client's plugin list after the service is created.  ONVIFCamera
+        does not accept a ``plugins`` parameter directly.
+        """
         try:
             from onvif import ONVIFCamera
         except ImportError as exc:
@@ -454,14 +459,18 @@ class OnvifSubscriber:
             ) from exc
 
         cfg = self._cfg
-        camera = ONVIFCamera(
-            cfg.camera_ip,
-            cfg.camera_port,
-            cfg.username,
-            cfg.password,
-            plugins=[self._history_plugin],
-        )
+        camera = ONVIFCamera(cfg.camera_ip, cfg.camera_port, cfg.username, cfg.password)
         pullpoint = camera.create_pullpoint_service()
+
+        # Attach the history plugin to the underlying zeep client.
+        # ONVIFService exposes the zeep Client as .zeep_client whose
+        # .plugins is a plain list we can append to.
+        try:
+            if self._history_plugin not in pullpoint.zeep_client.plugins:
+                pullpoint.zeep_client.plugins.append(self._history_plugin)
+        except AttributeError:
+            log.debug("Could not attach SOAP history plugin to zeep client")
+
         return camera, pullpoint
 
     def _poll_loop(self, pullpoint, deadline: float) -> None:
