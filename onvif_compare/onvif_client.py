@@ -139,6 +139,67 @@ def _parse_notification(notification, source: EventSource) -> Optional[MotionEve
 
 
 # ---------------------------------------------------------------------------
+# Error classification
+# ---------------------------------------------------------------------------
+
+
+# Phrases that onvif-zeep surfaces when authentication fails on various
+# camera brands.  The library does not raise a dedicated auth exception —
+# it wraps everything in ONVIFError or zeep.exceptions.Fault.
+_AUTH_HINTS = (
+    "not authorized",
+    "unauthorized",
+    "401",
+    "authentication",
+    "sender not authorized",
+    "access denied",
+    "invalid credentials",
+    "wrong password",
+    "bad credentials",
+)
+
+# Phrases that indicate the camera genuinely does not support PullPoint.
+_NO_PULLPOINT_HINTS = (
+    "doesn't support service: pullpoint",
+    "does not support service: pullpoint",
+    "no pullpoint",
+    "pullpoint not supported",
+)
+
+
+def _classify_connect_error(exc: Exception) -> str:
+    """Return a human-readable error string for a first-connect failure.
+
+    onvif-zeep surfaces authentication failures as generic ``ONVIFError``
+    with messages like ``Device doesn't support service: pullpoint`` when
+    the real cause is a wrong password.  This function inspects the
+    exception message and returns a clearer string.
+    """
+    msg = str(exc).lower()
+
+    if any(hint in msg for hint in _AUTH_HINTS):
+        return (
+            f"Authentication failed ({type(exc).__name__}: {exc})\n"
+            "Check --camera-user and --camera-password."
+        )
+
+    # onvif-zeep throws 'Device doesn't support service: pullpoint' both
+    # when auth fails on some cameras AND when the service genuinely does
+    # not exist.  We cannot distinguish them without a successful auth,
+    # so we surface both possibilities.
+    if any(hint in msg for hint in _NO_PULLPOINT_HINTS):
+        return (
+            f"Camera rejected the PullPoint subscription ({type(exc).__name__}: {exc})\n"
+            "Possible causes:\n"
+            "  1. Wrong password — check --camera-user and --camera-password\n"
+            "  2. Camera does not support ONVIF PullPoint events\n"
+            "  3. Camera requires a different ONVIF port (default: 8000) — try --camera-port"
+        )
+
+    return f"{type(exc).__name__}: {exc}"
+
+
+# ---------------------------------------------------------------------------
 # Subscriber
 # ---------------------------------------------------------------------------
 
@@ -247,7 +308,7 @@ class OnvifSubscriber:
 
             except Exception as exc:
                 if first_connect:
-                    self.errors.append(f"{type(exc).__name__}: {exc}")
+                    self.errors.append(_classify_connect_error(exc))
                     self._ready.set()
                     return
 

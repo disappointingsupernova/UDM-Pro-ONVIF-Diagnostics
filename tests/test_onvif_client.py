@@ -14,6 +14,7 @@ from lxml import etree
 
 from onvif_compare.models import EventSource
 from onvif_compare.onvif_client import (
+    _classify_connect_error,
     _parse_notification,
     _parse_utc,
     _simple_items_from_element,
@@ -172,3 +173,24 @@ class TestParseNotification:
         event = _parse_notification(notif, EventSource.LOCAL)
         assert event.tcp_stream == -1
         assert event.frame_number == -1
+
+
+class TestClassifyConnectError:
+    def test_auth_hint_401(self):
+        msg = _classify_connect_error(Exception("401 Unauthorized"))
+        assert "Authentication failed" in msg
+        assert "--camera-password" in msg
+
+    def test_auth_hint_not_authorized(self):
+        msg = _classify_connect_error(Exception("Sender not authorized"))
+        assert "Authentication failed" in msg
+
+    def test_pullpoint_hint_surfaces_both_causes(self):
+        msg = _classify_connect_error(Exception("Device doesn't support service: pullpoint"))
+        assert "Wrong password" in msg
+        assert "--camera-port" in msg
+
+    def test_unknown_error_returns_type_and_message(self):
+        msg = _classify_connect_error(ValueError("something unexpected"))
+        assert "ValueError" in msg
+        assert "something unexpected" in msg

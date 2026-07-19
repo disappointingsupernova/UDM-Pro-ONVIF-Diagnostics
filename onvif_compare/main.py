@@ -194,6 +194,7 @@ def _cmd_capture(args: argparse.Namespace) -> int:
         print(f"\nERROR: {exc}", file=sys.stderr)
         return 1
 
+    subscriber_ok = True
     try:
         subscriber.start(args.duration)
         time.sleep(args.duration)
@@ -202,10 +203,14 @@ def _cmd_capture(args: argparse.Namespace) -> int:
         print("\nCapture interrupted by user.", file=sys.stderr)
         subscriber.stop()
     except RuntimeError as exc:
-        print(f"\nERROR: Could not connect to camera: {exc}", file=sys.stderr)
+        print(f"\nERROR: {exc}", file=sys.stderr)
         subscriber.stop()
+        subscriber_ok = False
     finally:
         backend.stop()
+
+    if not subscriber_ok:
+        return 1
 
     try:
         backend.download(pcap_path)
