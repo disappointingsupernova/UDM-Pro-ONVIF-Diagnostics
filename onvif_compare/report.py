@@ -220,8 +220,10 @@ def _render_markdown(bundle: EvidenceBundle) -> str:
 
     local_true = sum(1 for e in local_events if e.operation == "Changed" and e.is_motion is True)
     local_false = sum(1 for e in local_events if e.operation == "Changed" and e.is_motion is False)
+    local_partial = sum(1 for e in local_events if e.parse_status == "partial")
     protect_notifs = [n for t in protect_txns for n in t.notifications]
     protect_true = sum(1 for e in protect_notifs if e.is_motion is True)
+    protect_partial = sum(1 for e in protect_notifs if e.parse_status == "partial")
     empty_pulls = sum(1 for t in protect_txns if not t.notifications and t.soap_fault is None and t.http_status == 200)
 
     m("## Summary")
@@ -230,9 +232,13 @@ def _render_markdown(bundle: EvidenceBundle) -> str:
     m("|---|---|")
     m(f"| Local IsMotion=true (Changed) | {local_true} |")
     m(f"| Local IsMotion=false (Changed) | {local_false} |")
+    if local_partial:
+        m(f"| Local notifications (partial/unrecognised) | {local_partial} |")
     m(f"| Protect PullMessages requests | {len(protect_txns)} |")
     m(f"| Protect notifications received | {len(protect_notifs)} |")
     m(f"| Protect IsMotion=true | {protect_true} |")
+    if protect_partial:
+        m(f"| Protect notifications (partial/unrecognised) | {protect_partial} |")
     m(f"| Empty Protect PullMessages (200 OK, 0 notifications) | {empty_pulls} |")
     m(f"| SOAP faults | {len(faults)} |")
     m("")
@@ -287,18 +293,39 @@ def _render_markdown(bundle: EvidenceBundle) -> str:
 
     # --- Notification table ---
     all_notifs = [n for t in protect_txns for n in t.notifications]
-    if all_notifs:
+    fully_parsed = [n for n in all_notifs if n.parse_status == "ok"]
+    partial_notifs = [n for n in all_notifs if n.parse_status == "partial"]
+
+    if fully_parsed:
         m("## Protect Notifications")
         m("")
         m("| UTC | Operation | IsMotion | State | Topic |")
         m("|---|---|---|---|---|")
-        for n in all_notifs:
+        for n in fully_parsed:
             m(
                 f"| `{format_utc(n.utc)}` "
                 f"| {n.operation} "
                 f"| {n.is_motion} "
                 f"| {n.state} "
                 f"| {n.topic} |"
+            )
+        m("")
+
+    if partial_notifs:
+        m("## Protect Notifications (Partial / Unrecognised)")
+        m("")
+        m("These notifications were received but could not be fully parsed. "
+          "They are preserved as evidence.")
+        m("")
+        m("| UTC | Topic | Warnings | Raw XML path |")
+        m("|---|---|---|---|")
+        for n in partial_notifs:
+            warnings_str = "; ".join(n.parse_warnings) if n.parse_warnings else "—"
+            m(
+                f"| `{format_utc(n.utc)}` "
+                f"| {n.topic or '—'} "
+                f"| {warnings_str} "
+                f"| — |"
             )
         m("")
 
