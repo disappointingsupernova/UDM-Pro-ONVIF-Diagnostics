@@ -454,6 +454,62 @@ class CaptureMetadata:
 
 
 # ---------------------------------------------------------------------------
+# Capture quality
+# ---------------------------------------------------------------------------
+
+
+class TrafficClassification(str, Enum):
+    """Classification of what Protect traffic was observed in the capture.
+
+    Used to prevent drawing conclusions from an incomplete capture.
+    """
+
+    NO_PROTECT_TRAFFIC = "no_protect_traffic_captured"
+    PROTECT_TRAFFIC_NO_PULLMESSAGES = "protect_traffic_captured_no_pullmessages"
+    PULLMESSAGES_NO_RESPONSE = "pullmessages_captured_no_response"
+    PULLMESSAGES_RESPONSE_INCOMPLETE = "pullmessages_response_incomplete"
+    PULLMESSAGES_RESPONSE_EMPTY = "pullmessages_response_empty"
+    PULLMESSAGES_RESPONSE_WITH_NOTIFICATIONS = "pullmessages_response_with_notifications"
+
+
+@dataclass
+class CaptureQuality:
+    """Evidence quality assessment for the capture.
+
+    Populated after PCAP analysis.  The report uses these fields to
+    qualify any conclusions drawn from the evidence.
+
+    Attributes
+    ----------
+    protect_packets_seen:
+        True if any packets involving protect_ip were captured.
+    protect_tcp_connections:
+        Number of TCP connections from protect_ip to the camera.
+    protect_pullmessages_requests:
+        Number of PullMessages requests from Protect observed in the PCAP.
+    protect_pullmessages_responses:
+        Number of PullMessages responses to Protect observed in the PCAP.
+    local_packets_seen:
+        True if any packets involving the local subscriber were captured.
+    local_pullmessages_requests:
+        Number of PullMessages requests from the local subscriber.
+    traffic_classification:
+        Overall classification of what was observed.
+    warnings:
+        List of human-readable quality warnings.
+    """
+
+    protect_packets_seen: bool = False
+    protect_tcp_connections: int = 0
+    protect_pullmessages_requests: int = 0
+    protect_pullmessages_responses: int = 0
+    local_packets_seen: bool = False
+    local_pullmessages_requests: int = 0
+    traffic_classification: TrafficClassification = TrafficClassification.NO_PROTECT_TRAFFIC
+    warnings: List[str] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # Top-level evidence bundle
 # ---------------------------------------------------------------------------
 
@@ -494,4 +550,5 @@ class EvidenceBundle:
     soap_faults: List[SoapFault]
     correlations: List[CorrelationRecord]
     observations: List[str]
+    capture_quality: CaptureQuality = field(default_factory=CaptureQuality)
     extra: Dict[str, object] = field(default_factory=dict)

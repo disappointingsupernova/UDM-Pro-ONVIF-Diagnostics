@@ -43,7 +43,15 @@ except ImportError as _exc:  # pragma: no cover
         "Install it with:  pip install scapy"
     ) from _exc
 
-from .models import EventSource, MotionEvent, PullTransaction, SoapFault, SoapOperation
+from .models import (
+    CaptureQuality,
+    EventSource,
+    MotionEvent,
+    PullTransaction,
+    SoapFault,
+    SoapOperation,
+    TrafficClassification,
+)
 from .soap import SoapParseError, parse_envelope
 from .util import sha256_bytes
 
@@ -356,6 +364,105 @@ def read_pcap(path: str) -> Iterator[Tuple[int, Packet, float]]:
         for i, pkt in enumerate(reader, start=1):
             ts = float(pkt.time)
             yield i, pkt, ts
+
+
+def assess_capture_quality(
+    path: str,
+    *,
+    protect_ip: str,
+    camera_ip: str,
+    local_ip: Optional[str],
+    protect_transactions: List[PullTransaction],
+    local_transactions: List[PullTransaction],
+) -> CaptureQuality:
+    """Assess the quality of the capture and classify what traffic was seen.
+
+    This prevents drawing conclusions from an incomplete or empty capture.
+    For example, zero Protect notifications is only meaningful evidence if
+    the capture affirmatively shows Protect issuing PullMessages requests.
+
+    Parameters
+    ----------
+    path:
+        Path to the PCAP file.
+    protect_ip:
+        IP address of UniFi Protect.
+    camera_ip:
+        IP address of the ONVIF camera.
+    local_ip:
+        IP address of the local subscriber, if known.
+    protect_transactions:
+        Parsed Protect PullMessages transactions.
+    local_transactions:
+        Parsed local PullMessages transactions.
+
+    Returns
+    -------
+    ``CaptureQuality`` with classification and warnings.
+    """
+    quality = CaptureQuality()
+    warnings: List[str] = []
+
+    # Count raw packets per source
+    protect_connections: set = set()
+    try:
+        for _, pkt, _ in read_pcap(path):
+            if not pkt.haslayer(IP) or not pkt.haslayer(TCP):
+                continue
+            ip = pkt[IP]
+            tcp = pkt[TCP]
+            if protect_ip in (ip.src, ip.dst) and camera_ip in (ip.src, ip.dst):
+                quality.protect_packets_seen = True
+                conn_key = (
+                    min(ip.src, ip.dst),
+                    min(tcp.sport, tcp.dport),
+                    max(tcp.sport, tcp.dport),
+                )
+                protect_connections.add(conn_key)
+            if local_ip and local_ip in (ip.src, ip.dst) and camera_ip in (ip.src, ip.dst):
+                quality.local_packets_seen = True
+    except Exception as exc:
+        warnings.append(f"Could not assess capture quality: {exc}")
+
+    quality.protect_tcp_connections = len(protect_connections)
+    quality.protect_pullmessages_requests = len(protect_transactions)
+    quality.protect_pullmessages_responses = sum(
+        1 for t in protect_transactions if t.response_frame != -1
+    )
+    quality.local_pullmessages_requests = len(local_transactions)
+
+    # Classify
+    if not quality.protect_packets_seen:
+        quality.traffic_classification = TrafficClassification.NO_PROTECT_TRAFFIC
+        warnings.append(
+            "No packets between Protect and the camera were captured. "
+            "Zero notifications cannot be used as evidence of a camera problem."
+        )
+    elif quality.protect_pullmessages_requests == 0:
+        quality.traffic_classification = TrafficClassification.PROTECT_TRAFFIC_NO_PULLMESSAGES
+        warnings.append(
+            "Protect traffic was captured but no PullMessages requests were observed. "
+            "Protect may not have been subscribed during the capture window."
+        )
+    elif quality.protect_pullmessages_responses == 0:
+        quality.traffic_classification = TrafficClassification.PULLMESSAGES_NO_RESPONSE
+        warnings.append(
+            "PullMessages requests were captured but no responses were observed. "
+            "The capture may be incomplete."
+        )
+    else:
+        protect_notifs = sum(len(t.notifications) for t in protect_transactions)
+        if protect_notifs > 0:
+            quality.traffic_classification = (
+                TrafficClassification.PULLMESSAGES_RESPONSE_WITH_NOTIFICATIONS
+            )
+        else:
+            quality.traffic_classification = (
+                TrafficClassification.PULLMESSAGES_RESPONSE_EMPTY
+            )
+
+    quality.warnings = warnings
+    return quality
 
 
 def pcap_time_bounds(path: str) -> Tuple[Optional[float], Optional[float]]:

@@ -348,4 +348,8 @@ def build_observations(bundle: "EvidenceBundle") -> List[str]:
             f"of {bundle.metadata.capture_host}."
         )
 
+    # Capture quality warnings
+    for warning in bundle.capture_quality.warnings:
+        obs.append(f"CAPTURE QUALITY WARNING: {warning}")
+
     return obs

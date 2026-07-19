@@ -39,7 +39,7 @@ from .models import (
     SubscriptionEvent,
 )
 from .onvif_client import OnvifSubscriber, SubscriberConfig
-from .pcap import extract_transactions, pcap_time_bounds, reconstruct_streams
+from .pcap import assess_capture_quality, extract_transactions, pcap_time_bounds, reconstruct_streams
 from .report import ReportWriter, bundle_to_json
 from .timeline import build_observations, build_timeline, correlate
 from .util import format_utc, local_ip_for, sha256_file, utc_now
@@ -400,6 +400,14 @@ def _analyse_pcap(
         soap_faults=soap_faults,
         correlations=correlations,
         observations=[],
+        capture_quality=assess_capture_quality(
+            str(pcap_path),
+            protect_ip=protect_ip,
+            camera_ip=camera_ip,
+            local_ip=local_ip,
+            protect_transactions=protect_txns,
+            local_transactions=local_txns,
+        ),
     )
     bundle.observations = build_observations(bundle)
 
