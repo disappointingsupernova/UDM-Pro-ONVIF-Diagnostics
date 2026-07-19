@@ -502,13 +502,16 @@ Both `report.md` and `report.html` contain:
 | Section | Contents |
 |---|---|
 | Environment | Camera IP/port/user, Protect IP, interface, capture host/mode, start/end UTC, requested duration, first/last packet UTC, observed duration, PCAP path, SHA-256 |
-| Summary | Counts of local events, Protect polls, notifications, empty responses, faults |
+| Capture Quality | Traffic classification, Protect/local packet counts, PullMessages request/response counts, quality warnings |
+| Summary | Counts of local events, Protect polls, notifications (fully parsed and partial), empty responses, faults |
 | Timeline | Every event in UTC order — polls, motion events, faults, subscriptions |
 | Protect PullMessages Transactions | Per-transaction table with HTTP status, notification count, fault code, stream index, frame numbers, links to raw XML |
 | SOAP Faults | Fault code, subcode, reason, HTTP status, stream, frame (only if faults present) |
-| Protect Notifications | Topic, UTC, IsMotion, State (only if notifications present) |
+| Protect Notifications | Topic, UTC, IsMotion, State for fully-parsed notifications (only if present) |
+| Protect Notifications (Partial) | UTC, topic, parse warnings, raw XML path for partially-parsed notifications (only if present) |
 | Correlation | Local motion event → nearest Protect poll before/after (ms) → result |
-| Observations | Ordered factual statements including capture quality warnings; no blame attribution |
+| Observations | Ordered factual statements including response latency, short lease detection, diagnosis summaries, capture quality warnings |
+| Diagnostic Analysis | Per-notification structural breakdown: diagnosis, namespaces used by camera, data items received, parse warnings (only if partial notifications present) |
 
 ---
 
