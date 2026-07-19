@@ -318,8 +318,22 @@ def _cmd_report(args: argparse.Namespace) -> int:
     raw = json.loads(evidence_path.read_text(encoding="utf-8"))
     print(f"Re-rendering report from {evidence_path}")
     print(f"Output: {output_dir}")
-    print("(Full deserialisation not yet implemented — use 'analyse' to regenerate from PCAP)")
-    return 0
+    print(
+        "ERROR: Full JSON deserialisation is not yet implemented.\n"
+        "Use 'analyse' with the original PCAP to regenerate the report:",
+        file=sys.stderr,
+    )
+    pcap_hint = raw.get("metadata", {}).get("pcap_path", "<pcap path>")
+    camera_hint = raw.get("metadata", {}).get("camera_ip", "<camera-ip>")
+    protect_hint = raw.get("metadata", {}).get("protect_ip", "<protect-ip>")
+    print(
+        f"  python3 -m onvif_compare analyse \\",
+        file=sys.stderr,
+    )
+    print(f"    --pcap {pcap_hint} \\", file=sys.stderr)
+    print(f"    --camera-ip {camera_hint} \\", file=sys.stderr)
+    print(f"    --protect-ip {protect_hint}", file=sys.stderr)
+    return 2  # not-implemented — distinct from general error (1)
 
 
 # ---------------------------------------------------------------------------
