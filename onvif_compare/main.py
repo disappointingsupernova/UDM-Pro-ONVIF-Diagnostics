@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from . import __version__
-from .capture import build_local_capture, build_remote_capture
+from .capture import CaptureError, build_local_capture, build_remote_capture
 from .models import (
     CaptureMetadata,
     EvidenceBundle,
@@ -186,16 +186,32 @@ def _cmd_capture(args: argparse.Namespace) -> int:
     print(f"\nStarting capture ({args.duration} s). Walk in front of the camera.")
     print("Wait for at least one IsMotion=true event in the log.\n")
 
+    capture_started = False
     try:
-        with backend:
-            subscriber.start(args.duration)
-            time.sleep(args.duration)
-            subscriber.stop()
+        backend.start()
+        capture_started = True
+    except CaptureError as exc:
+        print(f"\nERROR: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        subscriber.start(args.duration)
+        time.sleep(args.duration)
+        subscriber.stop()
     except KeyboardInterrupt:
         print("\nCapture interrupted by user.", file=sys.stderr)
         subscriber.stop()
+    except RuntimeError as exc:
+        print(f"\nERROR: Could not connect to camera: {exc}", file=sys.stderr)
+        subscriber.stop()
     finally:
+        backend.stop()
+
+    try:
         backend.download(pcap_path)
+    except Exception as exc:
+        print(f"\nERROR: Could not download PCAP: {exc}", file=sys.stderr)
+        return 1
 
     end_utc = utc_now()
 
@@ -382,7 +398,14 @@ def main() -> int:
         "analyse": _cmd_analyse,
         "report": _cmd_report,
     }
-    return dispatch[args.command](args)
+    try:
+        return dispatch[args.command](args)
+    except CaptureError as exc:
+        print(f"\nERROR: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\nInterrupted.", file=sys.stderr)
+        return 130
 
 
 if __name__ == "__main__":

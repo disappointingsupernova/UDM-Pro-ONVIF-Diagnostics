@@ -254,8 +254,10 @@ class RemoteCapture(CaptureBackend):
             return bridges[0]
 
         raise CaptureError(
-            f"Multiple bridge interfaces detected: {', '.join(bridges)}\n"
-            "Please specify --interface explicitly."
+            f"Multiple bridge interfaces found on {self._cfg.ssh_host}:\n"
+            + "".join(f"  {b}\n" for b in sorted(bridges))
+            + "\nAdd --interface <name> to your command, e.g.:\n"
+            + f"  --interface {sorted(bridges)[0]}"
         )
 
     def _start_tcpdump(self) -> int:
