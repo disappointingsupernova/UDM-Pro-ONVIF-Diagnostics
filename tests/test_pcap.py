@@ -17,6 +17,7 @@ from onvif_compare.pcap import (
     _extract_body,
     _http_status,
     _is_soap,
+    _read_chunked_body,
     _split_http_messages,
     extract_transactions,
     reconstruct_streams,
@@ -77,6 +78,39 @@ class TestHttpHelpers:
     def test_split_http_messages_no_separator(self):
         # No \r\n\r\n — returns empty list
         assert _split_http_messages(b"garbage") == []
+
+
+class TestChunkedParsing:
+    def test_chunk_extensions_stripped(self):
+        # Chunk size line with extension: "1a;ext=value"
+        chunked = b"5;ext=ignored\r\nhello\r\n0\r\n\r\n"
+        body, consumed = _read_chunked_body(chunked, 0)
+        assert body == b"hello"
+
+    def test_trailer_headers_consumed(self):
+        chunked = b"5\r\nhello\r\n0\r\nTrailer: value\r\n\r\n"
+        body, consumed = _read_chunked_body(chunked, 0)
+        assert body == b"hello"
+        assert consumed == len(chunked)
+
+    def test_multiple_chunks(self):
+        chunked = b"3\r\nfoo\r\n3\r\nbar\r\n0\r\n\r\n"
+        body, _ = _read_chunked_body(chunked, 0)
+        assert body == b"foobar"
+
+    def test_extract_body_not_double_decoded(self):
+        # If already_unchunked=True, _extract_body must not try to decode again.
+        # Pass decoded XML as if it came from _read_chunked_body.
+        decoded = b"<root/>"
+        hdrs = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n"
+        result = _extract_body(hdrs, decoded, already_unchunked=True)
+        assert result == b"<root/>"  # unchanged
+
+    def test_extract_body_decodes_when_not_already_unchunked(self):
+        chunked = b"5\r\nhello\r\n0\r\n\r\n"
+        hdrs = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n"
+        result = _extract_body(hdrs, chunked)
+        assert result == b"hello"
 
 
 # ---------------------------------------------------------------------------

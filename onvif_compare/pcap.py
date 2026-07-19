@@ -175,11 +175,19 @@ def _http_status(headers_block: bytes) -> int:
     return 0
 
 
-def _extract_body(headers_block: bytes, raw_body: bytes) -> bytes:
-    """Apply chunked decoding and content decompression to *raw_body*."""
-    te = _header_value(headers_block, "Transfer-Encoding") or ""
-    if "chunked" in te.lower():
-        raw_body = _decode_chunked(raw_body)
+def _extract_body(headers_block: bytes, raw_body: bytes, *, already_unchunked: bool = False) -> bytes:
+    """Apply chunked decoding and content decompression to *raw_body*.
+
+    Parameters
+    ----------
+    already_unchunked:
+        Set to ``True`` when the caller has already decoded chunked framing
+        (e.g. via ``_read_chunked_body``).  Prevents double-decoding.
+    """
+    if not already_unchunked:
+        te = _header_value(headers_block, "Transfer-Encoding") or ""
+        if "chunked" in te.lower():
+            raw_body = _decode_chunked(raw_body)
 
     ce = _header_value(headers_block, "Content-Encoding") or ""
     if ce:
@@ -434,8 +442,11 @@ def _split_http_messages(data: bytes) -> List[Tuple[bytes, bytes]]:
 
         te = _header_value(hdrs, "Transfer-Encoding") or ""
         if "chunked" in te.lower():
-            raw_body, consumed = _read_chunked_body(data, body_start)
-            body = _extract_body(hdrs, raw_body)
+            # _read_chunked_body returns already-decoded content.
+            # Pass already_decoded=True so _extract_body skips chunked
+            # decoding and only applies content-encoding (gzip etc.).
+            decoded_body, consumed = _read_chunked_body(data, body_start)
+            body = _extract_body(hdrs, decoded_body, already_unchunked=True)
             messages.append((hdrs, body))
             pos = body_start + consumed
             continue
@@ -450,23 +461,41 @@ def _split_http_messages(data: bytes) -> List[Tuple[bytes, bytes]]:
 
 
 def _read_chunked_body(data: bytes, start: int) -> Tuple[bytes, int]:
-    """Read a chunked body starting at *start*.  Returns (body, bytes_consumed)."""
+    """Read a chunked body starting at *start*.  Returns (decoded_body, bytes_consumed).
+
+    Handles:
+    - Chunk extensions: ``1a;extension=value``
+    - Zero-size terminal chunk
+    - Optional trailer headers
+    - Final empty line
+    """
     result = bytearray()
     pos = start
     while pos < len(data):
         end = data.find(b"\r\n", pos)
         if end == -1:
             break
+        # Strip chunk extensions (everything after the first semicolon)
+        size_field = data[pos:end].split(b";")[0].strip()
         try:
-            chunk_size = int(data[pos:end], 16)
+            chunk_size = int(size_field, 16)
         except ValueError:
             break
-        if chunk_size == 0:
-            pos = end + 2
-            break
         pos = end + 2
+        if chunk_size == 0:
+            # Consume optional trailer headers until blank line
+            while pos < len(data):
+                line_end = data.find(b"\r\n", pos)
+                if line_end == -1:
+                    pos = len(data)
+                    break
+                if line_end == pos:  # blank line — end of trailers
+                    pos = line_end + 2
+                    break
+                pos = line_end + 2
+            break
         result.extend(data[pos: pos + chunk_size])
-        pos += chunk_size + 2
+        pos += chunk_size + 2  # skip trailing CRLF
     return bytes(result), pos - start
 
 
