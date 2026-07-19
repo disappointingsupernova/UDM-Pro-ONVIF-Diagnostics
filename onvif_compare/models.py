@@ -46,6 +46,43 @@ class CorrelationResult(str, Enum):
     TIMEOUT = "timeout"
 
 
+class NotificationDiagnosis(str, Enum):
+    """Specific structural diagnosis for a partial or fully-parsed notification.
+
+    Used to classify exactly *why* a notification could not be fully parsed,
+    or to confirm it was structurally correct.  This is the primary field
+    a vendor needs to understand what their camera sent.
+    """
+
+    # Fully compliant
+    COMPLIANT = "compliant"
+
+    # Topic problems
+    TOPIC_ABSENT = "topic_absent"
+    TOPIC_UNKNOWN_DIALECT = "topic_unknown_dialect"
+
+    # Message element problems
+    MESSAGE_ELEMENT_ABSENT = "message_element_absent"
+    MESSAGE_ELEMENT_WRONG_NAMESPACE = "message_element_wrong_namespace"
+    MESSAGE_ELEMENT_DEEPER_THAN_EXPECTED = "message_element_deeper_than_expected"
+
+    # tt:Message attribute problems
+    UTCTIME_ABSENT = "utctime_absent"
+    UTCTIME_UNPARSEABLE = "utctime_unparseable"
+    PROPERTY_OPERATION_ABSENT = "property_operation_absent"
+
+    # Payload problems
+    DATA_SECTION_ABSENT = "data_section_absent"
+    ISMOTION_ITEM_ABSENT = "ismotion_item_absent"
+    ISMOTION_ITEM_WRONG_NAME = "ismotion_item_wrong_name"
+
+    # Namespace problems
+    WRONG_NAMESPACE_ON_SIMPLEITEMS = "wrong_namespace_on_simpleitems"
+
+    # Unknown
+    UNKNOWN = "unknown"
+
+
 class SoapOperation(str, Enum):
     """SOAP operations recognised by the parser."""
 
@@ -187,6 +224,8 @@ class MotionEvent:
     parse_status: str = field(default="ok")
     parse_warnings: List[str] = field(default_factory=list)
     timestamp_valid: bool = field(default=True)
+    diagnosis: Optional["NotificationDiagnosis"] = field(default=None)
+    actual_namespaces: Dict[str, str] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

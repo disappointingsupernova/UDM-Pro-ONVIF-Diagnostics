@@ -265,6 +265,68 @@ class TestPartialNotifications:
 
 
 # ---------------------------------------------------------------------------
+# Diagnostic classification
+# ---------------------------------------------------------------------------
+
+
+class TestNotificationDiagnosis:
+    def test_compliant_notification_diagnosed_compliant(self):
+        from onvif_compare.models import NotificationDiagnosis
+        xml = _load("motion_true.xml")
+        _, events = parse_envelope(xml, source=EventSource.PROTECT)
+        assert events[0].diagnosis == NotificationDiagnosis.COMPLIANT
+
+    def test_no_message_diagnosed_absent(self):
+        from onvif_compare.models import NotificationDiagnosis
+        xml = _load("notification_no_message.xml")
+        _, events = parse_envelope(xml, source=EventSource.PROTECT)
+        assert events[0].diagnosis == NotificationDiagnosis.MESSAGE_ELEMENT_ABSENT
+
+    def test_no_utctime_diagnosed_utctime_absent(self):
+        from onvif_compare.models import NotificationDiagnosis
+        xml = _load("notification_no_utctime.xml")
+        _, events = parse_envelope(xml, source=EventSource.PROTECT)
+        assert events[0].diagnosis == NotificationDiagnosis.UTCTIME_ABSENT
+
+    def test_wrong_item_name_diagnosed(self):
+        from onvif_compare.models import NotificationDiagnosis
+        xml = _load("notification_wrong_item_name.xml")
+        _, events = parse_envelope(xml, source=EventSource.PROTECT)
+        assert events[0].diagnosis == NotificationDiagnosis.ISMOTION_ITEM_WRONG_NAME
+        assert any("Motion" in w for w in events[0].parse_warnings)
+
+    def test_wrong_item_name_is_motion_none(self):
+        xml = _load("notification_wrong_item_name.xml")
+        _, events = parse_envelope(xml, source=EventSource.PROTECT)
+        # is_motion is None because the item name doesn't match
+        assert events[0].is_motion is None
+
+    def test_wrong_namespace_diagnosed(self):
+        from onvif_compare.models import NotificationDiagnosis
+        xml = _load("notification_wrong_namespace.xml")
+        _, events = parse_envelope(xml, source=EventSource.PROTECT)
+        assert events[0].diagnosis == NotificationDiagnosis.MESSAGE_ELEMENT_WRONG_NAMESPACE
+        assert any("vendor" in w or "namespace" in w.lower() for w in events[0].parse_warnings)
+
+    def test_wrong_namespace_recovery_attempts_parse(self):
+        """Even with wrong namespace, we should attempt to extract data."""
+        xml = _load("notification_wrong_namespace.xml")
+        _, events = parse_envelope(xml, source=EventSource.PROTECT)
+        # The event should be partial but not empty
+        assert events[0].parse_status == "partial"
+        assert events[0].raw_xml  # raw XML retained
+
+    def test_actual_namespaces_recorded(self):
+        xml = _load("notification_wrong_namespace.xml")
+        _, events = parse_envelope(xml, source=EventSource.PROTECT)
+        # The vendor namespace should appear in actual_namespaces
+        assert any(
+            "example-camera" in uri
+            for uri in events[0].actual_namespaces.values()
+        )
+
+
+# ---------------------------------------------------------------------------
 # Error handling
 # ---------------------------------------------------------------------------
 

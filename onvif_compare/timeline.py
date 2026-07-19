@@ -352,4 +352,125 @@ def build_observations(bundle: "EvidenceBundle") -> List[str]:
     for warning in bundle.capture_quality.warnings:
         obs.append(f"CAPTURE QUALITY WARNING: {warning}")
 
+    # --- Additional inferences from timing and subscription data ---
+
+    # PullMessages response latency
+    if protect_txns:
+        latencies = [
+            (t.response_time - t.request_time).total_seconds() * 1000
+            for t in protect_txns
+            if t.response_time and t.request_time
+            and t.response_time > t.request_time
+        ]
+        if latencies:
+            avg_ms = sum(latencies) / len(latencies)
+            min_ms = min(latencies)
+            obs.append(
+                f"Protect PullMessages average response latency: {avg_ms:.0f} ms "
+                f"(min {min_ms:.0f} ms). "
+                + (
+                    "Responses under 100 ms suggest the camera is not holding the "
+                    "connection open (long-polling not implemented)."
+                    if min_ms < 100 else
+                    "Response latency is consistent with long-polling behaviour."
+                )
+            )
+
+    # Subscription termination time (short lease = explains dropped subscriptions)
+    from .models import SoapOperation
+    sub_events = [
+        e.subscription_event
+        for e in bundle.timeline
+        if e.subscription_event is not None
+        and e.subscription_event.operation == SoapOperation.CREATE_PULLPOINT_RESPONSE
+        and e.subscription_event.termination_time is not None
+        and e.subscription_event.utc.year > 1970
+    ]
+    for sub in sub_events:
+        lease_s = (
+            sub.termination_time - sub.utc
+        ).total_seconds() if sub.termination_time and sub.utc.year > 1970 else None
+        if lease_s is not None and lease_s < 120:
+            obs.append(
+                f"Camera granted a PullPoint subscription lease of only {lease_s:.0f} s "
+                f"(subscription ID: {sub.subscription_id}). "
+                "Short leases require frequent renewal and may cause missed events "
+                "if the subscriber does not renew in time."
+            )
+
+    # Partial notification diagnosis summary
+    all_notifs = [n for t in protect_txns for n in t.notifications] + bundle.local_events
+    partial = [n for n in all_notifs if n.parse_status == "partial"]
+    if partial:
+        from .models import NotificationDiagnosis
+        diagnoses = {}
+        for n in partial:
+            d = n.diagnosis.value if n.diagnosis else "unknown"
+            diagnoses[d] = diagnoses.get(d, 0) + 1
+        for diag, count in sorted(diagnoses.items()):
+            obs.append(
+                f"{count} notification(s) received with structural issue: {diag}. "
+                + _diagnosis_explanation(diag)
+            )
+
     return obs
+
+
+# Plain-English explanations for each diagnosis value
+_DIAGNOSIS_EXPLANATIONS = {
+    "topic_absent": (
+        "The camera sent a NotificationMessage with no wsnt:Topic element. "
+        "The topic is required by ONVIF to identify the event type."
+    ),
+    "topic_unknown_dialect": (
+        "The camera used a non-standard Topic Dialect URI. "
+        "Protect may not recognise the topic and could silently discard the notification."
+    ),
+    "message_element_absent": (
+        "The wsnt:Message wrapper was empty — the camera sent the notification "
+        "envelope but included no payload. This is a camera firmware bug."
+    ),
+    "message_element_wrong_namespace": (
+        "The inner Message element was found under a vendor-specific namespace "
+        "instead of http://www.onvif.org/ver10/schema. "
+        "Protect's parser likely expects the standard namespace and may discard this."
+    ),
+    "message_element_deeper_than_expected": (
+        "The tt:Message element was nested deeper than the ONVIF spec requires. "
+        "A strict parser would not find it at the expected depth."
+    ),
+    "utctime_absent": (
+        "The tt:Message element was missing the required UtcTime attribute. "
+        "This is a camera non-compliance with ONVIF Event Service spec section 9.4."
+    ),
+    "utctime_unparseable": (
+        "The UtcTime attribute was present but not valid ISO-8601. "
+        "This may cause timestamp-based filtering to fail."
+    ),
+    "property_operation_absent": (
+        "The PropertyOperation attribute (Initialized/Changed/Deleted) was absent. "
+        "Protect may require this to determine whether to trigger a recording."
+    ),
+    "data_section_absent": (
+        "No tt:Data section was present in the message. "
+        "Without data items there is no IsMotion value to act on."
+    ),
+    "ismotion_item_absent": (
+        "The tt:Data section was present but contained no IsMotion SimpleItem. "
+        "The camera may be using a different topic schema that does not include IsMotion."
+    ),
+    "ismotion_item_wrong_name": (
+        "A boolean-valued SimpleItem was found but not named 'IsMotion'. "
+        "The camera is using a non-standard item name. "
+        "Protect's parser looks specifically for 'IsMotion' and will not find it."
+    ),
+    "wrong_namespace_on_simpleitems": (
+        "SimpleItem elements were found under a vendor namespace instead of "
+        "http://www.onvif.org/ver10/schema. "
+        "A namespace-aware parser would not match these as standard ONVIF data items."
+    ),
+}
+
+
+def _diagnosis_explanation(diagnosis: str) -> str:
+    return _DIAGNOSIS_EXPLANATIONS.get(diagnosis, "")

@@ -357,6 +357,51 @@ def _render_markdown(bundle: EvidenceBundle) -> str:
         m(f"- {obs}")
     m("")
 
+    # --- Diagnostic analysis of partial notifications ---
+    all_notifs = [n for t in protect_txns for n in t.notifications] + bundle.local_events
+    partial_all = [n for n in all_notifs if n.parse_status == "partial"]
+    if partial_all:
+        m("## Diagnostic Analysis of Partial Notifications")
+        m("")
+        m(
+            "The following notifications were received but could not be fully parsed. "
+            "Each entry shows the specific structural issue detected, the actual "
+            "namespaces used by the camera, and what this means for interoperability."
+        )
+        m("")
+        for i, n in enumerate(partial_all, start=1):
+            m(f"### Notification {i}")
+            m("")
+            m(f"- **Source:** {n.source.value}")
+            m(f"- **Topic:** {n.topic or '(absent)'}")
+            m(f"- **Diagnosis:** `{n.diagnosis.value if n.diagnosis else 'unknown'}`")
+            m(f"- **Timestamp valid:** {n.timestamp_valid}")
+            m(f"- **IsMotion:** {n.is_motion}")
+            m(f"- **PropertyOperation:** {n.operation or '(absent)'}")
+            if n.parse_warnings:
+                m("")
+                m("**Parse warnings:**")
+                m("")
+                for w in n.parse_warnings:
+                    m(f"- {w}")
+            if n.actual_namespaces:
+                m("")
+                m("**Namespaces used by camera in this notification:**")
+                m("")
+                m("| Prefix | URI |")
+                m("|---|---|")
+                for prefix, uri in sorted(n.actual_namespaces.items()):
+                    m(f"| `{prefix}` | `{uri}` |")
+            if n.data_items:
+                m("")
+                m("**Data items received:**")
+                m("")
+                m("| Name | Value |")
+                m("|---|---|")
+                for item in n.data_items:
+                    m(f"| `{item.name}` | `{item.value}` |")
+            m("")
+
     return "\n".join(md)
 
 

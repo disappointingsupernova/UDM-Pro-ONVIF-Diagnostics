@@ -30,6 +30,7 @@ from .models import (
     CorrelationResult,
     EventSource,
     MotionEvent,
+    NotificationDiagnosis,
     SimpleItem,
     SoapFault,
     SoapOperation,
@@ -114,6 +115,25 @@ def _simple_items(parent: etree._Element) -> List[SimpleItem]:
 def _to_xml_string(element: etree._Element) -> str:
     """Serialise *element* to a UTF-8 XML string."""
     return etree.tostring(element, encoding="unicode", pretty_print=True)
+
+
+def _collect_namespaces(element: etree._Element) -> dict:
+    """Return a dict of all namespace prefix→URI pairs used in *element* and its descendants."""
+    ns = {}
+    for el in element.iter():
+        for prefix, uri in (el.nsmap or {}).items():
+            if prefix and uri:
+                ns[prefix] = uri
+    return ns
+
+
+_KNOWN_ONVIF_TOPIC_DIALECTS = {
+    "http://www.onvif.org/ver10/tev/topicExpression/ConcreteSet",
+    "http://docs.oasis-open.org/wsn/t-1/TopicExpression/Concrete",
+    "http://www.onvif.org/ver10/tev/topicExpression/SimpleFilter",
+}
+
+_EXPECTED_TT_NS = "http://www.onvif.org/ver10/schema"
 
 
 def _body_child(envelope: etree._Element) -> Optional[etree._Element]:
@@ -311,68 +331,215 @@ def _parse_notification_message(
     """Parse one ``wsnt:NotificationMessage`` element into a ``MotionEvent``.
 
     Always returns a ``MotionEvent``.  When required fields are absent or
-    unparseable the event is marked ``parse_status='partial'`` and the
-    issues are recorded in ``parse_warnings``.  A malformed notification
-    is evidence in itself and must not be silently discarded.
+    unparseable the event is marked ``parse_status='partial'`` with a specific
+    ``diagnosis`` classifying the exact structural failure.
+
+    Diagnosis classification
+    ------------------------
+    COMPLIANT
+        All required fields present and parseable.
+    TOPIC_ABSENT
+        wsnt:Topic element missing entirely.
+    TOPIC_UNKNOWN_DIALECT
+        Topic present but uses an unrecognised Dialect URI.
+    MESSAGE_ELEMENT_ABSENT
+        wsnt:Message wrapper is empty — camera sent the envelope with no payload.
+    MESSAGE_ELEMENT_WRONG_NAMESPACE
+        Inner message element exists but under a vendor namespace instead of
+        http://www.onvif.org/ver10/schema.
+    MESSAGE_ELEMENT_DEEPER_THAN_EXPECTED
+        tt:Message found but not as a direct child of wsnt:Message.
+    UTCTIME_ABSENT
+        tt:Message present but UtcTime attribute missing.
+    UTCTIME_UNPARSEABLE
+        UtcTime present but not valid ISO-8601.
+    PROPERTY_OPERATION_ABSENT
+        PropertyOperation attribute missing from tt:Message.
+    DATA_SECTION_ABSENT
+        No tt:Data section in the message.
+    ISMOTION_ITEM_ABSENT
+        tt:Data present but no IsMotion SimpleItem.
+    ISMOTION_ITEM_WRONG_NAME
+        A boolean-valued SimpleItem exists but is not named IsMotion —
+        possible name mismatch (e.g. Motion, motion, IsDetected).
+    WRONG_NAMESPACE_ON_SIMPLEITEMS
+        SimpleItem elements found under a non-standard namespace.
     """
     warnings: List[str] = []
     parse_status = "ok"
+    diagnosis = NotificationDiagnosis.COMPLIANT
+    actual_namespaces = _collect_namespaces(notif_el)
 
+    # ------------------------------------------------------------------
+    # 1. Topic
+    # ------------------------------------------------------------------
     topic_nodes = notif_el.xpath("./*[local-name()='Topic']")
     topic = "".join(topic_nodes[0].itertext()).strip() if topic_nodes else ""
-    if not topic_nodes:
-        warnings.append("NotificationMessage did not contain a Topic element")
 
-    # The inner tt:Message element carries UtcTime and PropertyOperation.
-    # Accept Message elements with or without UtcTime.
-    message_nodes = notif_el.xpath(".//*[local-name()='Message'][@UtcTime]")
-    if not message_nodes:
-        # Try without the UtcTime requirement — prefer the innermost Message
-        # (tt:Message) over the outer wsnt:Message wrapper.
-        all_msg = notif_el.xpath(".//*[local-name()='Message']")
-        # Filter to elements that have PropertyOperation (tt:Message)
-        # or fall back to elements with child elements.
-        with_op = [m for m in all_msg if m.get("PropertyOperation") is not None]
-        message_nodes = with_op if with_op else [m for m in all_msg if len(m) > 0]
-        if not message_nodes:
-            message_nodes = all_msg  # last resort: take any Message
-        if not message_nodes:
-            warnings.append("NotificationMessage did not contain a Message element")
-            parse_status = "partial"
-            return MotionEvent(
-                utc=datetime(1970, 1, 1, tzinfo=timezone.utc),
-                operation="",
-                is_motion=None,
-                state=None,
-                topic=topic,
-                source_items=[],
-                key_items=[],
-                data_items=[],
-                source=source,
-                tcp_stream=tcp_stream,
-                frame_number=frame_number,
-                raw_xml=_to_xml_string(notif_el),
-                parse_status=parse_status,
-                parse_warnings=warnings,
-                timestamp_valid=False,
+    if not topic_nodes:
+        warnings.append("wsnt:Topic element is absent from NotificationMessage")
+        parse_status = "partial"
+        diagnosis = NotificationDiagnosis.TOPIC_ABSENT
+    else:
+        dialect = topic_nodes[0].get("Dialect", "")
+        if dialect and dialect not in _KNOWN_ONVIF_TOPIC_DIALECTS:
+            warnings.append(
+                f"Topic Dialect={dialect!r} is not a recognised ONVIF dialect; "
+                f"known: {sorted(_KNOWN_ONVIF_TOPIC_DIALECTS)}"
             )
-        warnings.append("Message element present but UtcTime attribute is absent")
+            # Not a hard failure — we can still parse the rest
+
+    # ------------------------------------------------------------------
+    # 2. Find the inner tt:Message element
+    # ------------------------------------------------------------------
+    message_nodes = notif_el.xpath(".//*[local-name()='Message'][@UtcTime]")
+
+    # Check immediately if the found Message is under the wrong namespace
+    # (local-name() XPath is namespace-agnostic, so it matches vendor elements too)
+    if message_nodes:
+        msg_ns = etree.QName(message_nodes[0]).namespace
+        if msg_ns and msg_ns != _EXPECTED_TT_NS:
+            warnings.append(
+                f"tt:Message found under namespace {msg_ns!r} "
+                f"instead of {_EXPECTED_TT_NS!r} — "
+                "camera is using a vendor-specific schema"
+            )
+            parse_status = "partial"
+            if diagnosis == NotificationDiagnosis.COMPLIANT:
+                diagnosis = NotificationDiagnosis.MESSAGE_ELEMENT_WRONG_NAMESPACE
+
+    if not message_nodes:
+        all_msg = notif_el.xpath(".//*[local-name()='Message']")
+        with_op = [m for m in all_msg if m.get("PropertyOperation") is not None]
+        candidates = with_op if with_op else [m for m in all_msg if len(m) > 0]
+        if not candidates:
+            candidates = all_msg
+
+        if not candidates:
+            # wsnt:Message wrapper empty?
+            wsnt_msg = notif_el.xpath("./*[local-name()='Message']")
+            if wsnt_msg and len(wsnt_msg[0]) == 0:
+                warnings.append(
+                    "wsnt:Message wrapper is present but empty — "
+                    "camera sent the notification envelope with no payload"
+                )
+            else:
+                # Look for Message under a wrong namespace
+                # Exclude wsnt:Message (the wrapper element itself)
+                _WSNT_NS = "http://docs.oasis-open.org/wsn/b-2"
+                wrong_ns = [
+                    el for el in notif_el.iter()
+                    if etree.QName(el).localname == "Message"
+                    and etree.QName(el).namespace not in (_EXPECTED_TT_NS, _WSNT_NS, None)
+                    and el is not notif_el
+                ]
+                if wrong_ns:
+                    actual_ns = etree.QName(wrong_ns[0]).namespace
+                    warnings.append(
+                        f"Message element found under namespace {actual_ns!r} "
+                        f"instead of {_EXPECTED_TT_NS!r} — "
+                        "camera is using a vendor-specific schema"
+                    )
+                    diagnosis = NotificationDiagnosis.MESSAGE_ELEMENT_WRONG_NAMESPACE
+                    candidates = wrong_ns
+                else:
+                    warnings.append(
+                        "NotificationMessage contains no inner Message element"
+                    )
+            if not candidates:
+                parse_status = "partial"
+                if diagnosis == NotificationDiagnosis.COMPLIANT:
+                    diagnosis = NotificationDiagnosis.MESSAGE_ELEMENT_ABSENT
+                return MotionEvent(
+                    utc=datetime(1970, 1, 1, tzinfo=timezone.utc),
+                    operation="",
+                    is_motion=None,
+                    state=None,
+                    topic=topic,
+                    source_items=[],
+                    key_items=[],
+                    data_items=[],
+                    source=source,
+                    tcp_stream=tcp_stream,
+                    frame_number=frame_number,
+                    raw_xml=_to_xml_string(notif_el),
+                    parse_status=parse_status,
+                    parse_warnings=warnings,
+                    timestamp_valid=False,
+                    diagnosis=diagnosis,
+                    actual_namespaces=actual_namespaces,
+                )
+
+        # Check if the found Message is deeper than expected
+        # Skip this check if the only candidate is the wsnt:Message wrapper itself
+        _WSNT_NS = "http://docs.oasis-open.org/wsn/b-2"
+        is_only_wsnt_wrapper = (
+            len(candidates) == 1
+            and etree.QName(candidates[0]).namespace == _WSNT_NS
+        )
+        if not is_only_wsnt_wrapper:
+            wsnt_direct = []
+            for wsnt_m in notif_el.xpath("./*[local-name()='Message']"):
+                wsnt_direct.extend(wsnt_m.xpath("./*[local-name()='Message']"))
+            if candidates[0] not in wsnt_direct and not with_op:
+                warnings.append(
+                    "tt:Message found but not as a direct child of wsnt:Message — "
+                    "camera nested it deeper than the ONVIF spec requires"
+                )
+                if diagnosis == NotificationDiagnosis.COMPLIANT:
+                    diagnosis = NotificationDiagnosis.MESSAGE_ELEMENT_DEEPER_THAN_EXPECTED
+        else:
+            # The only 'Message' found is the wsnt:Message wrapper with no children
+            warnings.append(
+                "wsnt:Message wrapper is present but contains no tt:Message child"
+            )
+            if diagnosis == NotificationDiagnosis.COMPLIANT:
+                diagnosis = NotificationDiagnosis.MESSAGE_ELEMENT_ABSENT
+
+        warnings.append("tt:Message present but UtcTime attribute is absent")
+        message_nodes = candidates
 
     msg = message_nodes[0]
+
+    # ------------------------------------------------------------------
+    # 3. UtcTime
+    # ------------------------------------------------------------------
     utc_str = msg.get("UtcTime", "")
     utc = _parse_utc(utc_str)
     timestamp_valid = utc is not None
-    if utc is None:
-        log.warning("Could not parse UtcTime=%r in NotificationMessage", utc_str)
-        warnings.append(f"Could not parse UtcTime={utc_str!r}; using epoch sentinel")
+
+    if not utc_str:
+        warnings.append("UtcTime attribute is absent from tt:Message")
         parse_status = "partial"
+        if diagnosis == NotificationDiagnosis.COMPLIANT:
+            diagnosis = NotificationDiagnosis.UTCTIME_ABSENT
+        utc = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    elif utc is None:
+        log.warning("Could not parse UtcTime=%r in NotificationMessage", utc_str)
+        warnings.append(
+            f"UtcTime={utc_str!r} is present but not valid ISO-8601"
+        )
+        parse_status = "partial"
+        if diagnosis == NotificationDiagnosis.COMPLIANT:
+            diagnosis = NotificationDiagnosis.UTCTIME_UNPARSEABLE
         utc = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
+    # ------------------------------------------------------------------
+    # 4. PropertyOperation
+    # ------------------------------------------------------------------
     operation = msg.get("PropertyOperation", "")
     if not operation:
-        warnings.append("PropertyOperation attribute is absent")
+        warnings.append(
+            "PropertyOperation attribute is absent from tt:Message; "
+            "cannot determine if this is Initialized/Changed/Deleted"
+        )
         parse_status = "partial"
+        if diagnosis == NotificationDiagnosis.COMPLIANT:
+            diagnosis = NotificationDiagnosis.PROPERTY_OPERATION_ABSENT
 
+    # ------------------------------------------------------------------
+    # 5. Source / Key / Data sections
+    # ------------------------------------------------------------------
     source_el_list = msg.xpath("./*[local-name()='Source']")
     key_el_list = msg.xpath("./*[local-name()='Key']")
     data_el_list = msg.xpath("./*[local-name()='Data']")
@@ -381,13 +548,70 @@ def _parse_notification_message(
     key_items = _simple_items(key_el_list[0]) if key_el_list else []
     data_items = _simple_items(data_el_list[0]) if data_el_list else []
 
+    if not data_el_list:
+        warnings.append(
+            "tt:Data section is absent — no SimpleItem payload in this notification"
+        )
+        parse_status = "partial"
+        if diagnosis == NotificationDiagnosis.COMPLIANT:
+            diagnosis = NotificationDiagnosis.DATA_SECTION_ABSENT
+
+    # ------------------------------------------------------------------
+    # 6. IsMotion extraction with wrong-name detection
+    # ------------------------------------------------------------------
     is_motion: Optional[bool] = None
     state: Optional[bool] = None
+    boolean_items_with_wrong_name: List[str] = []
+
     for item in data_items:
         if item.name == "IsMotion":
             is_motion = _to_bool(item.value)
         elif item.name == "State":
             state = _to_bool(item.value)
+        else:
+            if _to_bool(item.value) is not None:
+                boolean_items_with_wrong_name.append(item.name)
+
+    if is_motion is None and data_el_list:
+        if boolean_items_with_wrong_name:
+            warnings.append(
+                f"No IsMotion SimpleItem found, but these items have boolean values "
+                f"and may be the motion indicator under a different name: "
+                f"{boolean_items_with_wrong_name}. "
+                f"This is a naming mismatch — the camera does not use the ONVIF-standard "
+                f"'IsMotion' item name."
+            )
+            parse_status = "partial"
+            if diagnosis == NotificationDiagnosis.COMPLIANT:
+                diagnosis = NotificationDiagnosis.ISMOTION_ITEM_WRONG_NAME
+        elif data_items:
+            warnings.append(
+                f"tt:Data present but no IsMotion SimpleItem found. "
+                f"Items present: {[i.name for i in data_items]}"
+            )
+            parse_status = "partial"
+            if diagnosis == NotificationDiagnosis.COMPLIANT:
+                diagnosis = NotificationDiagnosis.ISMOTION_ITEM_ABSENT
+
+    # ------------------------------------------------------------------
+    # 7. Namespace check on SimpleItems
+    # ------------------------------------------------------------------
+    if data_el_list:
+        all_simple = data_el_list[0].xpath(".//*[local-name()='SimpleItem']")
+        wrong_ns_items = [
+            el for el in all_simple
+            if etree.QName(el).namespace
+            and etree.QName(el).namespace != _EXPECTED_TT_NS
+        ]
+        if wrong_ns_items:
+            actual_ns = etree.QName(wrong_ns_items[0]).namespace
+            warnings.append(
+                f"SimpleItem elements are under namespace {actual_ns!r} "
+                f"instead of {_EXPECTED_TT_NS!r} — "
+                "camera is using a vendor-specific schema for data items"
+            )
+            if diagnosis == NotificationDiagnosis.COMPLIANT:
+                diagnosis = NotificationDiagnosis.WRONG_NAMESPACE_ON_SIMPLEITEMS
 
     return MotionEvent(
         utc=utc,
@@ -405,6 +629,8 @@ def _parse_notification_message(
         parse_status=parse_status,
         parse_warnings=warnings,
         timestamp_valid=timestamp_valid,
+        diagnosis=diagnosis,
+        actual_namespaces=actual_namespaces,
     )
 
 
