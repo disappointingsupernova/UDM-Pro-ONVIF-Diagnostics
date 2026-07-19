@@ -55,15 +55,24 @@ class TestRemoteCaptureConfig:
             interface=None,
         )
         assert cfg.keep_remote is False
-        assert cfg.remote_pcap_path == "/tmp/onvif_compare_capture.pcap"
+        # Remote paths are empty until RemoteCapture.__init__ assigns them
+        assert cfg.remote_pcap_path == ""
 
-    def test_factory(self):
+    def test_factory_assigns_uuid_paths(self):
         cap = build_remote_capture(
             ssh_host="10.0.0.1",
             camera_ip="192.168.1.100",
         )
         assert cap._cfg.ssh_host == "10.0.0.1"
         assert cap._cfg.ssh_port == 22
+        # UUID paths must be set and unique per instance
+        assert "/tmp/onvif-compare-" in cap._cfg.remote_pcap_path
+        assert cap._cfg.remote_pcap_path.endswith("/capture.pcap")
+
+    def test_two_instances_have_different_paths(self):
+        cap1 = build_remote_capture(ssh_host="10.0.0.1", camera_ip="192.168.1.100")
+        cap2 = build_remote_capture(ssh_host="10.0.0.1", camera_ip="192.168.1.100")
+        assert cap1._cfg.remote_dir != cap2._cfg.remote_dir
 
 
 class TestLocalCaptureConfig:

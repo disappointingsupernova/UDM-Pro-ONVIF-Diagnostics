@@ -26,6 +26,15 @@ tcpdump check
 Before starting a capture the backend runs ``which tcpdump`` on the target
 host.  If tcpdump is absent it raises ``CaptureError`` with an actionable
 message.
+
+Run isolation
+-------------
+Each capture run uses a UUID-based remote directory so concurrent runs and
+stale files from abandoned captures never collide:
+
+    /tmp/onvif-compare-<uuid>/capture.pcap
+    /tmp/onvif-compare-<uuid>/tcpdump.pid
+    /tmp/onvif-compare-<uuid>/tcpdump.log
 """
 
 from __future__ import annotations
@@ -35,6 +44,7 @@ import shutil
 import subprocess
 import threading
 import time
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -102,9 +112,12 @@ class RemoteCaptureConfig:
     ssh_password: Optional[str] = None
     ssh_key: Optional[str] = None
     keep_remote: bool = False
-    remote_pcap_path: str = "/tmp/onvif_compare_capture.pcap"
-    remote_pid_path: str = "/tmp/onvif_compare.pid"
-    remote_log_path: str = "/tmp/onvif_compare.log"
+    # Remote paths are derived from a per-run UUID in RemoteCapture.__init__
+    # and stored here so download() can reference them after stop().
+    remote_dir: str = ""
+    remote_pcap_path: str = ""
+    remote_pid_path: str = ""
+    remote_log_path: str = ""
 
 
 class RemoteCapture(CaptureBackend):
@@ -124,7 +137,14 @@ class RemoteCapture(CaptureBackend):
 
     def __init__(self, config: RemoteCaptureConfig) -> None:
         self._cfg = config
-        self._client = None   # paramiko.SSHClient
+        # Assign UUID-based remote paths so concurrent runs never collide.
+        run_id = uuid.uuid4().hex[:12]
+        remote_dir = f"/tmp/onvif-compare-{run_id}"
+        self._cfg.remote_dir = remote_dir
+        self._cfg.remote_pcap_path = f"{remote_dir}/capture.pcap"
+        self._cfg.remote_pid_path = f"{remote_dir}/tcpdump.pid"
+        self._cfg.remote_log_path = f"{remote_dir}/tcpdump.log"
+        self._client = None
         self._pid: Optional[int] = None
         self._interface: Optional[str] = None
 
@@ -171,9 +191,7 @@ class RemoteCapture(CaptureBackend):
 
         if not self._cfg.keep_remote:
             self._remote_cmd(
-                f"rm -f {self._cfg.remote_pcap_path} "
-                f"{self._cfg.remote_pid_path} "
-                f"{self._cfg.remote_log_path}",
+                f"rm -rf {self._cfg.remote_dir}",
                 check=False,
             )
 
@@ -266,7 +284,7 @@ class RemoteCapture(CaptureBackend):
             f"host {cfg.camera_ip} and tcp port {cfg.camera_port}"
         )
         command = (
-            f"rm -f {cfg.remote_pcap_path} {cfg.remote_pid_path} {cfg.remote_log_path}; "
+            f"mkdir -p {cfg.remote_dir}; "
             f"nohup tcpdump -U -i {self._interface} -nn -s0 "
             f"-w {cfg.remote_pcap_path} "
             f"'{capture_filter}' "
