@@ -460,6 +460,7 @@ SUMMARY
 Camera:                    192.168.1.100:8000
 Protect IP:                10.54.4.1
 Capture duration:          60 s
+Capture quality:           pullmessages_response_empty
 
 Local IsMotion=true:       2
 Local IsMotion=false:      2
@@ -477,6 +478,9 @@ OBSERVATIONS
   • Of those, 12 returned HTTP 200 with zero NotificationMessage elements.
   • No SOAP faults were observed in the capture.
   • Protect received zero IsMotion=true notifications during the capture period.
+  • Protect PullMessages average response latency: 48 ms (min 31 ms).
+    Responses under 100 ms suggest the camera is not holding the connection
+    open (long-polling not implemented).
 
 Report:  /home/user/evidence_20240315_084100/report.md
 HTML:    /home/user/evidence_20240315_084100/report.html
